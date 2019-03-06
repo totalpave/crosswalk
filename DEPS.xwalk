@@ -28,7 +28,7 @@ v8_crosswalk_rev = 'a48e44faef59edeb1fb254233a1c12b5d5999432'
 buildtools_rev = '454e53abae6e4d68ee992b0a93a4174b75519393'
 
 chromium_git = 'https://chromium.googlesource.com'
-crosswalk_git = 'https://github.com/crosswalk-project'
+crosswalk_git = 'https://github.com/totalpave'
 
 # ------------------------------------------------------
 # gclient solutions.
