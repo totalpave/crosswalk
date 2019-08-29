@@ -43,7 +43,7 @@ solutions = [
     'managed': True,
     'custom_deps': {
       'src':
-        crosswalk_git + '/chromium-crosswalk.git@' + chromium_crosswalk_rev,
+        tp_git + '/chromium-crosswalk.git@' + chromium_crosswalk_rev,
       'src/v8':
         crosswalk_git + '/v8-crosswalk.git@' + v8_crosswalk_rev,
 
