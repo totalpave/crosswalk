@@ -17,7 +17,7 @@
 # Edit these when rolling DEPS.xwalk.
 # -----------------------------------
 
-chromium_crosswalk_rev = 'dd39e4fbbc1e4417cef2f908cc0a42af1e2120aa'
+chromium_crosswalk_rev = 'master'
 v8_crosswalk_rev = 'a48e44faef59edeb1fb254233a1c12b5d5999432'
 
 # We need our own copy of src/buildtools in order to have the gn and
@@ -29,6 +29,7 @@ buildtools_rev = '454e53abae6e4d68ee992b0a93a4174b75519393'
 
 chromium_git = 'https://chromium.googlesource.com'
 crosswalk_git = 'https://github.com/totalpave'
+tp_git = 'ssh://totalpave/opt/git/'
 
 # ------------------------------------------------------
 # gclient solutions.
@@ -37,7 +38,7 @@ crosswalk_git = 'https://github.com/totalpave'
 
 solutions = [
   { 'name': 'src',
-    'url': crosswalk_git + '/chromium-crosswalk.git@' + chromium_crosswalk_rev,
+    'url': tp_git + '/chromium-crosswalk.git@' + chromium_crosswalk_rev,
     'deps_file': '.DEPS.git',
     'managed': True,
     'custom_deps': {
