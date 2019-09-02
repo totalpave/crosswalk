@@ -53,23 +53,23 @@
 #include "xwalk/runtime/browser/xwalk_runner.h"
 #include "jni/XWalkContent_jni.h"
 
-#ifdef TENTA_CHROMIUM_BUILD
-#include "xwalk/third_party/tenta/meta_fs/meta_errors.h"
-#include "xwalk/third_party/tenta/meta_fs/meta_db.h"
-#include "xwalk/third_party/tenta/meta_fs/meta_file.h"
-#include "xwalk/third_party/tenta/meta_fs/a_cancellable_read_listener.h"
-#include "xwalk/third_party/tenta/meta_fs/jni/meta_fs_manager.h"
-#include "xwalk/third_party/tenta/meta_fs/jni/meta_file_system.h"
-#include "xwalk/third_party/tenta/meta_fs/jni/meta_virtual_file.h"
-#include "xwalk/third_party/tenta/meta_fs/jni/java_byte_array.h"
-#include "xwalk/third_party/tenta/chromium_cache/meta_cache_backend.h"
+// #ifdef TENTA_CHROMIUM_BUILD
+// #include "xwalk/third_party/tenta/meta_fs/meta_errors.h"
+// #include "xwalk/third_party/tenta/meta_fs/meta_db.h"
+// #include "xwalk/third_party/tenta/meta_fs/meta_file.h"
+// #include "xwalk/third_party/tenta/meta_fs/a_cancellable_read_listener.h"
+// #include "xwalk/third_party/tenta/meta_fs/jni/meta_fs_manager.h"
+// #include "xwalk/third_party/tenta/meta_fs/jni/meta_file_system.h"
+// #include "xwalk/third_party/tenta/meta_fs/jni/meta_virtual_file.h"
+// #include "xwalk/third_party/tenta/meta_fs/jni/java_byte_array.h"
+// #include "xwalk/third_party/tenta/chromium_cache/meta_cache_backend.h"
 
-#include "tenta_history_store.h"
-#include "browser/tenta_tab_model.h"
+// #include "tenta_history_store.h"
+// #include "browser/tenta_tab_model.h"
 
-using namespace tenta::ext;
-namespace metafs = ::tenta::fs;
-#endif  // #ifdef TENTA_CHROMIUM_BUILD
+// using namespace tenta::ext;
+// namespace metafs = ::tenta::fs;
+// #endif  // #ifdef TENTA_CHROMIUM_BUILD
 
 #include "meta_logging.h"
 

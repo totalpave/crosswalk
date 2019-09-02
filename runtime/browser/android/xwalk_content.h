@@ -16,10 +16,10 @@
 #include "xwalk/runtime/browser/android/find_helper.h"
 #include "xwalk/runtime/browser/android/renderer_host/xwalk_render_view_host_ext.h"
 
-#ifdef TENTA_CHROMIUM_BUILD
-#include "browser/neterror/tenta_net_error_client.h"
-#include "xwalk/third_party/tenta/meta_fs/jni/meta_virtual_file.h"
-using tenta::fs::MetaFile;
+// #ifdef TENTA_CHROMIUM_BUILD
+// #include "browser/neterror/tenta_net_error_client.h"
+// #include "xwalk/third_party/tenta/meta_fs/jni/meta_virtual_file.h"
+// using tenta::fs::MetaFile;
 
 namespace tenta {
 namespace fs {
