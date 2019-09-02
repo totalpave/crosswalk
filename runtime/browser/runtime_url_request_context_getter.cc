@@ -17,8 +17,8 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/sequenced_worker_pool.h"
-#include "base/threading/worker_pool.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/cookie_store_factory.h"
 #include "content/public/common/content_switches.h"
@@ -27,6 +27,7 @@
 #include "net/cert/ct_policy_enforcer.h"
 #include "net/cert/ct_policy_status.h"
 #include "net/cert/ct_verifier.h"
+#include "net/cert/do_nothing_ct_verifier.h"
 #include "net/cookies/cookie_monster.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/mapped_host_resolver.h"
@@ -42,6 +43,7 @@
 #include "net/url_request/file_protocol_handler.h"
 #include "net/url_request/static_http_user_agent_settings.h"
 #include "net/url_request/url_request_context.h"
+#include "net/url_request/url_request_context_builder.h"
 #include "net/url_request/url_request_context_storage.h"
 #include "net/url_request/url_request_intercepting_job_factory.h"
 #include "net/url_request/url_request_interceptor.h"
@@ -50,6 +52,12 @@
 #include "xwalk/runtime/browser/runtime_network_delegate.h"
 #include "xwalk/runtime/common/xwalk_content_client.h"
 #include "xwalk/runtime/common/xwalk_switches.h"
+#ifdef TENTA_CHROMIUM_BUILD
+#include "host_resolver_tenta.h"
+#include "xwalk/third_party/tenta/chromium_cache/chromium_cache_factory.h"
+
+namespace tenta_cache = tenta::fs::cache;
+#endif
 
 #if defined(OS_ANDROID)
 #include "net/proxy/proxy_config_service_android.h"
@@ -72,22 +80,26 @@ namespace {
 // CT information with the classes below.
 // See the discussion in http://crbug.com/669978 for more information.
 
-// A CTVerifier which ignores Certificate Transparency information.
+// TODO replaced by net::DoNothingCTVerifier
+/*// A CTVerifier which ignores Certificate Transparency information.
 class IgnoresCTVerifier : public net::CTVerifier {
  public:
   IgnoresCTVerifier() = default;
   ~IgnoresCTVerifier() override = default;
 
-  int Verify(net::X509Certificate* cert,
-             const std::string& stapled_ocsp_response,
-             const std::string& sct_list_from_tls_extension,
-             net::ct::CTVerifyResult* result,
-             const net::BoundNetLog& net_log) override {
-    return net::OK;
+  void Verify(X509Certificate* cert,
+                      base::StringPiece stapled_ocsp_response,
+                      base::StringPiece sct_list_from_tls_extension,
+                      SignedCertificateTimestampAndStatusList* output_scts,
+                      const NetLogWithSource& net_log) override {
+    // TODO see net/cert/do_nothing_ct_verifier.cc
+    // TODO check for nullptr
+    output_scts->clear();
   }
 
   void SetObserver(Observer* observer) override {}
 };
+*/
 
 // A CTPolicyEnforcer that accepts all certificates.
 class IgnoresCTPolicyEnforcer : public net::CTPolicyEnforcer {
@@ -95,20 +107,13 @@ class IgnoresCTPolicyEnforcer : public net::CTPolicyEnforcer {
   IgnoresCTPolicyEnforcer() = default;
   ~IgnoresCTPolicyEnforcer() override = default;
 
-  net::ct::CertPolicyCompliance DoesConformToCertPolicy(
+  net::ct::CTPolicyCompliance CheckCompliance(
       net::X509Certificate* cert,
       const net::SCTList& verified_scts,
-      const net::BoundNetLog& net_log) override {
-    return net::ct::CertPolicyCompliance::CERT_POLICY_COMPLIES_VIA_SCTS;
+      const net::NetLogWithSource& net_log) override {
+    return net::ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS;
   }
 
-  net::ct::EVPolicyCompliance DoesConformToCTEVPolicy(
-      net::X509Certificate* cert,
-      const net::ct::EVCertsWhitelist* ev_whitelist,
-      const net::SCTList& verified_scts,
-      const net::BoundNetLog& net_log) override {
-    return net::ct::EVPolicyCompliance::EV_POLICY_DOES_NOT_APPLY;
-  }
 };
 
 }  // namespace
@@ -117,31 +122,30 @@ int GetDiskCacheSize() {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
 
   if (!command_line->HasSwitch(switches::kDiskCacheSize))
-      return 0;
+    return 0;
 
   std::string str_value = command_line->GetSwitchValueASCII(
       switches::kDiskCacheSize);
 
   int size = 0;
   if (!base::StringToInt(str_value, &size)) {
-      LOG(ERROR) << "The value " << str_value
-                 << " can not be converted to integer, ignoring!";
+    LOG(ERROR) << "The value " << str_value
+                  << " can not be converted to integer, ignoring!";
   }
 
   return size;
 }
 
 RuntimeURLRequestContextGetter::RuntimeURLRequestContextGetter(
-    bool ignore_certificate_errors,
-    const base::FilePath& base_path,
-    base::MessageLoop* io_loop,
-    base::MessageLoop* file_loop,
+    bool ignore_certificate_errors, const base::FilePath& base_path,
+    const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner, 
+    const scoped_refptr<base::SingleThreadTaskRunner>& file_task_runner,
     content::ProtocolHandlerMap* protocol_handlers,
     content::URLRequestInterceptorScopedVector request_interceptors)
     : ignore_certificate_errors_(ignore_certificate_errors),
       base_path_(base_path),
-      io_loop_(io_loop),
-      file_loop_(file_loop),
+      io_task_runner_(io_task_runner),
+      file_task_runner_(file_task_runner),
       request_interceptors_(std::move(request_interceptors)) {
   // Must first be created on the UI thread.
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
@@ -152,14 +156,13 @@ RuntimeURLRequestContextGetter::RuntimeURLRequestContextGetter(
   // must synchronously run on the glib message loop. This will be passed to
   // the URLRequestContextStorage on the IO thread in GetURLRequestContext().
 #if defined(OS_ANDROID)
-  proxy_config_service_ = net::ProxyService::CreateSystemProxyConfigService(
-      io_loop_->task_runner(), file_loop_->task_runner());
+  proxy_config_service_ = net::ProxyService::CreateSystemProxyConfigService(io_task_runner);
   net::ProxyConfigServiceAndroid* android_config_service =
       static_cast<net::ProxyConfigServiceAndroid*>(proxy_config_service_.get());
   android_config_service->set_exclude_pac_url(true);
 #else
   proxy_config_service_ = net::ProxyService::CreateSystemProxyConfigService(
-      io_loop_->task_runner(), file_loop_->task_runner());
+      io_task_runner, file_task_runner);
 #endif
 }
 
@@ -179,7 +182,7 @@ net::URLRequestContext* RuntimeURLRequestContextGetter::GetURLRequestContext() {
     storage_->set_cookie_store(base::WrapUnique(new XWalkCookieStoreWrapper));
 #else
     content::CookieStoreConfig cookie_config(base_path_.Append(
-        application::kCookieDatabaseFilename),
+            application::kCookieDatabaseFilename),
         content::CookieStoreConfig::PERSISTANT_SESSION_COOKIES,
         NULL, NULL);
 
@@ -194,15 +197,41 @@ net::URLRequestContext* RuntimeURLRequestContextGetter::GetURLRequestContext() {
     auto cookie_store = content::CreateCookieStore(cookie_config);
     storage_->set_cookie_store(std::move(cookie_store));
 #endif
-    storage_->set_channel_id_service(base::WrapUnique(new net::ChannelIDService(
-        new net::DefaultChannelIDStore(NULL),
-        base::WorkerPool::GetTaskRunner(true))));
-    storage_->set_http_user_agent_settings(base::WrapUnique(
-        new net::StaticHttpUserAgentSettings("en-us,en",
-                                             xwalk::GetUserAgent())));
+    //TODO(iotto) : Implement safe ChannelIDStore
+    storage_->set_channel_id_service(
+        base::WrapUnique(
+            new net::ChannelIDService(new net::DefaultChannelIDStore(NULL))));
+    storage_->set_http_user_agent_settings(
+        base::WrapUnique(
+            new net::StaticHttpUserAgentSettings("en-us,en",
+                                                 xwalk::GetUserAgent())));
 
-    std::unique_ptr<net::HostResolver> host_resolver(
-        net::HostResolver::CreateDefaultResolver(NULL));
+#ifdef TENTA_CHROMIUM_BUILD
+    std::unique_ptr<tenta_cache::ChromiumCacheFactory> main_backend(new tenta_cache::ChromiumCacheFactory());
+
+    //TODO (iotto): Remove backup, needed for speed comparison
+    // or use when we'll have option for native host resolver
+    std::unique_ptr<net::HostResolver> backup =
+    net::HostResolver::CreateDefaultResolver(NULL);
+
+    tenta::ext::HostResolverTenta * hrt = new tenta::ext::HostResolverTenta(
+        std::move(backup));
+    hrt->use_backup(false);
+
+    std::unique_ptr<net::HostResolver> host_resolver(hrt);
+
+#else
+    base::FilePath cache_path = base_path_.Append(FILE_PATH_LITERAL("Cache"));
+
+    std::unique_ptr<net::HttpCache::DefaultBackend> main_backend(
+        new net::HttpCache::DefaultBackend(
+            net::DISK_CACHE, net::CACHE_BACKEND_DEFAULT, cache_path,
+            GetDiskCacheSize()));
+
+    std::unique_ptr<net::MappedHostResolver> host_resolver(
+        new net::MappedHostResolver(
+            net::HostResolver::CreateDefaultResolver(nullptr)));
+#endif
 
     storage_->set_cert_verifier(net::CertVerifier::CreateDefault());
     storage_->set_transport_security_state(
@@ -216,7 +245,7 @@ net::URLRequestContext* RuntimeURLRequestContextGetter::GetURLRequestContext() {
     // to update their apps as well.
     // See the discussion in http://crbug.com/669978 for more information.
     storage_->set_cert_transparency_verifier(
-        base::WrapUnique(new IgnoresCTVerifier));
+        base::WrapUnique(new net::DoNothingCTVerifier()));
     storage_->set_ct_policy_enforcer(
         base::WrapUnique(new IgnoresCTPolicyEnforcer));
 
@@ -226,64 +255,57 @@ net::URLRequestContext* RuntimeURLRequestContextGetter::GetURLRequestContext() {
     // on this local HTTP proxy.
     storage_->set_proxy_service(
         net::ProxyService::CreateWithoutProxyResolver(
-        std::move(proxy_config_service_),
-        NULL));
+            std::move(proxy_config_service_), NULL));
 #else
     storage_->set_proxy_service(
         net::ProxyService::CreateUsingSystemProxyResolver(
-        std::move(proxy_config_service_),
-        0,
-        NULL));
+            std::move(proxy_config_service_),
+            0,
+            NULL));
 #endif
     storage_->set_ssl_config_service(new net::SSLConfigServiceDefaults);
     storage_->set_http_auth_handler_factory(
         net::HttpAuthHandlerFactory::CreateDefault(host_resolver.get()));
-    storage_->set_http_server_properties(std::unique_ptr<net::HttpServerProperties>(
-        new net::HttpServerPropertiesImpl));
-
-    base::FilePath cache_path = base_path_.Append(FILE_PATH_LITERAL("Cache"));
-    std::unique_ptr<net::HttpCache::DefaultBackend> main_backend(
-        new net::HttpCache::DefaultBackend(
-            net::DISK_CACHE,
-            net::CACHE_BACKEND_DEFAULT,
-            cache_path,
-            GetDiskCacheSize(),
-            BrowserThread::GetMessageLoopProxyForThread(
-                BrowserThread::CACHE)));
+    storage_->set_http_server_properties(
+        std::unique_ptr < net::HttpServerProperties
+            > (new net::HttpServerPropertiesImpl));
 
     net::HttpNetworkSession::Params network_session_params;
-    network_session_params.cert_verifier =
+    net::HttpNetworkSession::Context network_session_context;
+
+    network_session_context.cert_verifier =
         url_request_context_->cert_verifier();
-    network_session_params.transport_security_state =
-        url_request_context_->transport_security_state();
-    network_session_params.cert_transparency_verifier =
-        url_request_context_->cert_transparency_verifier();
-    network_session_params.ct_policy_enforcer =
-        url_request_context_->ct_policy_enforcer();
-    network_session_params.channel_id_service =
-        url_request_context_->channel_id_service();
-    network_session_params.proxy_service =
+    network_session_context.transport_security_state = url_request_context_
+        ->transport_security_state();
+    network_session_context.cert_transparency_verifier = url_request_context_
+        ->cert_transparency_verifier();
+    network_session_context.ct_policy_enforcer = url_request_context_
+        ->ct_policy_enforcer();
+    network_session_context.channel_id_service = url_request_context_
+        ->channel_id_service();
+    network_session_context.proxy_service =
         url_request_context_->proxy_service();
-    network_session_params.ssl_config_service =
-        url_request_context_->ssl_config_service();
-    network_session_params.http_auth_handler_factory =
-        url_request_context_->http_auth_handler_factory();
-    network_session_params.http_server_properties =
-        url_request_context_->http_server_properties();
+    network_session_context.ssl_config_service = url_request_context_
+        ->ssl_config_service();
+    network_session_context.http_auth_handler_factory = url_request_context_
+        ->http_auth_handler_factory();
+    network_session_context.http_server_properties = url_request_context_
+        ->http_server_properties();
     network_session_params.ignore_certificate_errors =
         ignore_certificate_errors_;
 
     // Give |storage_| ownership at the end in case it's |mapped_host_resolver|.
     storage_->set_host_resolver(std::move(host_resolver));
-    network_session_params.host_resolver =
+    network_session_context.host_resolver =
         url_request_context_->host_resolver();
 
     storage_->set_http_network_session(
-        base::WrapUnique(new net::HttpNetworkSession(network_session_params)));
+        base::WrapUnique(new net::HttpNetworkSession(network_session_params, network_session_context)));
     storage_->set_http_transaction_factory(
-        base::WrapUnique(new net::HttpCache(storage_->http_network_session(),
-                        std::move(main_backend),
-                        false /* set_up_quic_server_info */)));
+        base::WrapUnique(
+            new net::HttpCache(storage_->http_network_session(),
+                               std::move(main_backend),
+                               true /* is_main_cache; set_up_quic_server_info */)));
 #if defined(OS_ANDROID)
     std::unique_ptr<XWalkURLRequestJobFactory> job_factory_impl(
         new XWalkURLRequestJobFactory);
@@ -296,10 +318,8 @@ net::URLRequestContext* RuntimeURLRequestContextGetter::GetURLRequestContext() {
 
     // Step 1:
     // Install all the default schemes for crosswalk.
-    for (content::ProtocolHandlerMap::iterator it =
-             protocol_handlers_.begin();
-         it != protocol_handlers_.end();
-         ++it) {
+    for (content::ProtocolHandlerMap::iterator it = protocol_handlers_.begin();
+        it != protocol_handlers_.end(); ++it) {
       set_protocol = job_factory_impl->SetProtocolHandler(
           it->first, base::WrapUnique(it->second.release()));
       DCHECK(set_protocol);
@@ -309,23 +329,18 @@ net::URLRequestContext* RuntimeURLRequestContextGetter::GetURLRequestContext() {
     // Step 2:
     // Add new basic schemes.
     set_protocol = job_factory_impl->SetProtocolHandler(
-        url::kDataScheme,
-        base::WrapUnique(new net::DataProtocolHandler));
+        url::kDataScheme, base::WrapUnique(new net::DataProtocolHandler));
     DCHECK(set_protocol);
     set_protocol = job_factory_impl->SetProtocolHandler(
-        url::kFileScheme,
-        base::WrapUnique(new net::FileProtocolHandler(
-            content::BrowserThread::GetBlockingPool()->
-            GetTaskRunnerWithShutdownBehavior(
-                base::SequencedWorkerPool::SKIP_ON_SHUTDOWN))));
+        url::kFileScheme, base::WrapUnique(new net::FileProtocolHandler(base::CreateSequencedTaskRunnerWithTraits( {
+            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN }))));
     DCHECK(set_protocol);
 
     // Step 3:
     // Add the scheme interceptors.
-  // in the order in which they appear in the |request_interceptors| vector.
-  typedef std::vector<net::URLRequestInterceptor*>
-      URLRequestInterceptorVector;
-  URLRequestInterceptorVector request_interceptors;
+    // in the order in which they appear in the |request_interceptors| vector.
+    typedef std::vector<net::URLRequestInterceptor*> URLRequestInterceptorVector;
+    URLRequestInterceptorVector request_interceptors;
 
 #if defined(OS_ANDROID)
     request_interceptors.push_back(
@@ -348,25 +363,24 @@ net::URLRequestContext* RuntimeURLRequestContextGetter::GetURLRequestContext() {
     // order in which the elements of the chain are created.
     std::unique_ptr<net::URLRequestJobFactory> job_factory(
         std::move(job_factory_impl));
-    for (URLRequestInterceptorVector::reverse_iterator
-             i = request_interceptors.rbegin();
-         i != request_interceptors.rend();
-         ++i) {
-      job_factory.reset(new net::URLRequestInterceptingJobFactory(
-          std::move(job_factory), base::WrapUnique(*i)));
+    for (URLRequestInterceptorVector::reverse_iterator i = request_interceptors
+        .rbegin(); i != request_interceptors.rend(); ++i) {
+      job_factory.reset(
+          new net::URLRequestInterceptingJobFactory(std::move(job_factory),
+                                                    base::WrapUnique(*i)));
     }
 
     // Set up interceptors in the reverse order.
-    std::unique_ptr<net::URLRequestJobFactory> top_job_factory =
-        std::move(job_factory);
+    std::unique_ptr<net::URLRequestJobFactory> top_job_factory = std::move(
+        job_factory);
     for (content::URLRequestInterceptorScopedVector::reverse_iterator i =
-             request_interceptors_.rbegin();
-         i != request_interceptors_.rend();
-         ++i) {
-      top_job_factory.reset(new net::URLRequestInterceptingJobFactory(
-          std::move(top_job_factory), base::WrapUnique(*i)));
+        request_interceptors_.rbegin(); i != request_interceptors_.rend();
+        ++i) {
+      top_job_factory.reset(
+          new net::URLRequestInterceptingJobFactory(std::move(top_job_factory),
+                                                    std::move(*i)));
     }
-    request_interceptors_.weak_clear();
+    request_interceptors_.clear();
 
     storage_->set_job_factory(std::move(top_job_factory));
   }
@@ -374,9 +388,8 @@ net::URLRequestContext* RuntimeURLRequestContextGetter::GetURLRequestContext() {
   return url_request_context_.get();
 }
 
-scoped_refptr<base::SingleThreadTaskRunner>
-    RuntimeURLRequestContextGetter::GetNetworkTaskRunner() const {
-  return BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO);
+scoped_refptr<base::SingleThreadTaskRunner> RuntimeURLRequestContextGetter::GetNetworkTaskRunner() const {
+  return BrowserThread::GetTaskRunnerForThread(BrowserThread::IO);
 }
 
 net::HostResolver* RuntimeURLRequestContextGetter::host_resolver() {
@@ -387,9 +400,10 @@ void RuntimeURLRequestContextGetter::UpdateAcceptLanguages(
     const std::string& accept_languages) {
   if (!storage_)
     return;
-  storage_->set_http_user_agent_settings(base::WrapUnique(
-      new net::StaticHttpUserAgentSettings(accept_languages,
-                                           xwalk::GetUserAgent())));
+  storage_->set_http_user_agent_settings(
+      base::WrapUnique(
+          new net::StaticHttpUserAgentSettings(accept_languages,
+                                               xwalk::GetUserAgent())));
 }
 
 }  // namespace xwalk

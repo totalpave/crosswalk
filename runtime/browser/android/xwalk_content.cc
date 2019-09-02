@@ -5,6 +5,7 @@
 
 #include "xwalk/runtime/browser/android/xwalk_content.h"
 
+#include <memory>
 #include <algorithm>
 #include <cctype>
 #include <string>
@@ -21,17 +22,21 @@
 #include "base/pickle.h"
 #include "base/strings/string_number_conversions.h"
 #include "components/navigation_interception/intercept_navigation_delegate.h"
+#include "components/version_info/version_info.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/cert_store.h"
+#include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
+#include "content/public/browser/ssl_status.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/renderer_preferences.h"
-#include "content/public/common/ssl_status.h"
+//#include "content/public/common/ssl_status.h"
 #include "content/public/common/url_constants.h"
+
 #include "ui/gfx/geometry/rect_f.h"
 #include "xwalk/application/common/application_manifest_constants.h"
 #include "xwalk/application/common/manifest.h"
@@ -40,7 +45,6 @@
 #include "xwalk/runtime/browser/android/xwalk_autofill_client_android.h"
 #include "xwalk/runtime/browser/android/xwalk_content_lifecycle_notifier.h"
 #include "xwalk/runtime/browser/android/xwalk_contents_client_bridge.h"
-#include "xwalk/runtime/browser/android/xwalk_contents_client_bridge_base.h"
 #include "xwalk/runtime/browser/android/xwalk_contents_io_thread_client_impl.h"
 #include "xwalk/runtime/browser/android/xwalk_web_contents_delegate.h"
 #include "xwalk/runtime/browser/runtime_resource_dispatcher_host_delegate_android.h"
@@ -48,6 +52,26 @@
 #include "xwalk/runtime/browser/xwalk_browser_context.h"
 #include "xwalk/runtime/browser/xwalk_runner.h"
 #include "jni/XWalkContent_jni.h"
+
+#ifdef TENTA_CHROMIUM_BUILD
+#include "xwalk/third_party/tenta/meta_fs/meta_errors.h"
+#include "xwalk/third_party/tenta/meta_fs/meta_db.h"
+#include "xwalk/third_party/tenta/meta_fs/meta_file.h"
+#include "xwalk/third_party/tenta/meta_fs/a_cancellable_read_listener.h"
+#include "xwalk/third_party/tenta/meta_fs/jni/meta_fs_manager.h"
+#include "xwalk/third_party/tenta/meta_fs/jni/meta_file_system.h"
+#include "xwalk/third_party/tenta/meta_fs/jni/meta_virtual_file.h"
+#include "xwalk/third_party/tenta/meta_fs/jni/java_byte_array.h"
+#include "xwalk/third_party/tenta/chromium_cache/meta_cache_backend.h"
+
+#include "tenta_history_store.h"
+#include "browser/tenta_tab_model.h"
+
+using namespace tenta::ext;
+namespace metafs = ::tenta::fs;
+#endif  // #ifdef TENTA_CHROMIUM_BUILD
+
+#include "meta_logging.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertUTF8ToJavaString;
@@ -63,17 +87,92 @@ namespace keys = xwalk::application_manifest_keys;
 namespace xwalk {
 
 namespace {
+const int cBlkSize = 4 * 1024;
 
 const void* kXWalkContentUserDataKey = &kXWalkContentUserDataKey;
 
-class XWalkContentUserData : public base::SupportsUserData::Data {
+#ifdef TENTA_CHROMIUM_BUILD
+// database name for history
+static const std::string cHistoryDb = "c22b0c42-90d5-4a1e-9565-79cbab3b22dd";
+static const int cHistoryBlockSize = ::tenta::fs::MetaDb::BLOCK_64K;
+
+
+// TODO make a template AutoCallClose
+/**
+ *
+ */
+class AutoCloseMetaFile {
  public:
-  explicit XWalkContentUserData(XWalkContent* ptr) : content_(ptr) {}
+  AutoCloseMetaFile(scoped_refptr<metafs::MetaFile>& mvf)
+      : _mvf(mvf) {
+  }
+  ~AutoCloseMetaFile() {
+    if (_mvf.get() != nullptr) {
+      _mvf->Close();
+    }
+  }
+ private:
+  scoped_refptr<metafs::MetaFile>& _mvf;
+};
+
+class AutoCloseMetaDb {
+ public:
+  AutoCloseMetaDb(scoped_refptr<metafs::MetaDb>& db)
+      : _db(db) {
+  }
+  ~AutoCloseMetaDb() {
+    if (_db.get() != nullptr) {
+      ::tenta::fs::MetaFsManager * mng = ::tenta::fs::MetaFsManager::GetInstance();
+      mng->CloseDb(cHistoryDb);
+    }
+  }
+ private:
+  scoped_refptr<metafs::MetaDb>& _db;
+};
+
+/**
+ *
+ */
+class MetaReadToPickle :
+    public metafs::ACancellableReadListener {
+ public:
+  MetaReadToPickle(base::Pickle& pickle)
+      : ACancellableReadListener(ScopedJavaGlobalRef<jobject>()),
+        _pickle_to_fill(pickle) {
+
+  }
+
+  void OnData(const char *data, int length) override {
+    _pickle_to_fill.WriteBytes(data, length);
+  }
+  void OnStart(const std::string &guid, int length) override {
+  }
+  void OnProgress(float percent) override {
+  }
+  void OnDone(int status) override {
+  }
+  bool wasCancelledNotify(int* outStatus = nullptr) override {
+    return false;
+  }
+ private:
+  base::Pickle& _pickle_to_fill;
+};
+
+#endif // TENTA_CHROMIUM_BUILD
+/**
+ *
+ */
+class XWalkContentUserData :
+    public base::SupportsUserData::Data {
+ public:
+  explicit XWalkContentUserData(XWalkContent* ptr)
+      : content_(ptr) {
+  }
   static XWalkContent* GetContents(content::WebContents* web_contents) {
     if (!web_contents)
       return nullptr;
-    XWalkContentUserData* data = reinterpret_cast<XWalkContentUserData*>(
-      web_contents->GetUserData(kXWalkContentUserDataKey));
+    XWalkContentUserData* data = reinterpret_cast<XWalkContentUserData*>(web_contents->GetUserData(
+        kXWalkContentUserDataKey));
     return data ? data->content_ : nullptr;
   }
 
@@ -84,13 +183,11 @@ class XWalkContentUserData : public base::SupportsUserData::Data {
 // FIXME(wang16): Remove following methods after deprecated fields
 // are not supported any more.
 void PrintManifestDeprecationWarning(std::string field) {
-  LOG(WARNING) << "\"" << field << "\" is deprecated for Crosswalk. "
-      << "Please follow "
-      << "https://www.crosswalk-project.org/#documentation/manifest.";
+  LOG(WARNING) << "\"" << field << "\" is deprecated for Crosswalk. " << "Please follow "
+               << "https://www.crosswalk-project.org/#documentation/manifest.";
 }
 
-bool ManifestHasPath(const xwalk::application::Manifest& manifest,
-                     const std::string& path,
+bool ManifestHasPath(const xwalk::application::Manifest& manifest, const std::string& path,
                      const std::string& deprecated_path) {
   if (manifest.HasPath(path))
     return true;
@@ -101,10 +198,8 @@ bool ManifestHasPath(const xwalk::application::Manifest& manifest,
   return false;
 }
 
-bool ManifestGetString(const xwalk::application::Manifest& manifest,
-                       const std::string& path,
-                       const std::string& deprecated_path,
-                       std::string* out_value) {
+bool ManifestGetString(const xwalk::application::Manifest& manifest, const std::string& path,
+                       const std::string& deprecated_path, std::string* out_value) {
   if (manifest.GetString(path, out_value))
     return true;
   if (manifest.GetString(deprecated_path, out_value)) {
@@ -117,36 +212,36 @@ bool ManifestGetString(const xwalk::application::Manifest& manifest,
 }  // namespace
 
 // static
-XWalkContent* XWalkContent::FromID(int render_process_id,
-                                   int render_view_id) {
+XWalkContent* XWalkContent::FromID(int render_process_id, int render_view_id) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  content::RenderViewHost* rvh =
-      content::RenderViewHost::FromID(render_process_id, render_view_id);
-  if (!rvh) return NULL;
-  content::WebContents* web_contents =
-      content::WebContents::FromRenderViewHost(rvh);
-  if (!web_contents) return NULL;
+  content::RenderViewHost* rvh = content::RenderViewHost::FromID(render_process_id, render_view_id);
+  if (!rvh)
+    return NULL;
+  content::WebContents* web_contents = content::WebContents::FromRenderViewHost(rvh);
+  if (!web_contents)
+    return NULL;
   return FromWebContents(web_contents);
 }
 
 // static
-XWalkContent* XWalkContent::FromWebContents(
-    content::WebContents* web_contents) {
+XWalkContent* XWalkContent::FromWebContents(content::WebContents* web_contents) {
   return XWalkContentUserData::GetContents(web_contents);
 }
 
 XWalkContent::XWalkContent(std::unique_ptr<content::WebContents> web_contents)
-    : web_contents_(std::move(web_contents)) {
+    : web_contents_(std::move(web_contents)),
+      tab_id(base::Time::Now().ToInternalValue()) {
   xwalk_autofill_manager_.reset(new XWalkAutofillManager(web_contents_.get()));
   XWalkContentLifecycleNotifier::OnXWalkViewCreated();
 }
 
-void XWalkContent::SetXWalkAutofillClient(jobject client) {
+void XWalkContent::SetXWalkAutofillClient(const base::android::JavaRef<jobject>& client) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
-  if (obj.is_null()) return;
-  Java_XWalkContent_setXWalkAutofillClient(env, obj.obj(), client);
+  if (obj.is_null())
+    return;
+  Java_XWalkContent_setXWalkAutofillClient(env, obj, client);
 }
 
 void XWalkContent::SetSaveFormData(bool enabled) {
@@ -154,59 +249,85 @@ void XWalkContent::SetSaveFormData(bool enabled) {
   xwalk_autofill_manager_->InitAutofillIfNecessary(enabled);
   // We need to check for the existence, since autofill_manager_delegate
   // may not be created when the setting is false.
-  if (auto client =
-      XWalkAutofillClientAndroid::FromWebContents(web_contents_.get()))
+  XWalkAutofillClientAndroid *client = XWalkAutofillClientAndroid::FromWebContents(
+      web_contents_.get());
+  if (client != nullptr )
     client->SetSaveFormData(enabled);
 }
 
 XWalkContent::~XWalkContent() {
   XWalkContentLifecycleNotifier::OnXWalkViewDestroyed();
+#ifdef TENTA_CHROMIUM_BUILD
+  TentaHistoryStore* h_store = TentaHistoryStore::GetInstance();
+  h_store->SetController(reinterpret_cast<intptr_t>(this), nullptr);
+
+  TentaTabModel * tab_model = TentaTabModelFactory::GetForContext(web_contents_->GetBrowserContext());
+  if ( tab_model ) {
+    tab_model->RemoveTab(tab_id);
+  } else {
+    TENTA_LOG_NET(ERROR) << __func__ << " NULL_tab_model";
+  }
+#endif
 }
 
-void XWalkContent::SetJavaPeers(JNIEnv* env,
-                                jobject obj,
-                                jobject xwalk_content,
-                                jobject web_contents_delegate,
-                                jobject contents_client_bridge,
-                                jobject io_thread_client,
-                                jobject intercept_navigation_delegate) {
+void XWalkContent::SetJavaPeers(
+    JNIEnv* env, const base::android::JavaParamRef<jobject>& obj,
+    const base::android::JavaParamRef<jobject>& xwalk_content,
+    const base::android::JavaParamRef<jobject>& web_contents_delegate,
+    const base::android::JavaParamRef<jobject>& contents_client_bridge,
+    const base::android::JavaParamRef<jobject>& io_thread_client,
+    const base::android::JavaParamRef<jobject>& intercept_navigation_delegate) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   java_ref_ = JavaObjectWeakGlobalRef(env, xwalk_content);
 
-  web_contents_delegate_.reset(new XWalkWebContentsDelegate(
-      env, web_contents_delegate));
-  contents_client_bridge_.reset(new XWalkContentsClientBridge(
-      env, contents_client_bridge, web_contents_.get()));
+  web_contents_delegate_.reset(new XWalkWebContentsDelegate(env, web_contents_delegate));
+  contents_client_bridge_.reset(new XWalkContentsClientBridge(env, contents_client_bridge, web_contents_.get()));
 
-  web_contents_->SetUserData(
-      kXWalkContentUserDataKey, new XWalkContentUserData(this));
+  web_contents_->SetUserData(kXWalkContentUserDataKey, base::MakeUnique<XWalkContentUserData>(this));
 
   XWalkContentsIoThreadClientImpl::RegisterPendingContents(web_contents_.get());
 
-  // XWalk does not use disambiguation popup for multiple targets.
-  content::RendererPreferences* prefs =
-      web_contents_->GetMutableRendererPrefs();
-  prefs->tap_multiple_targets_strategy =
-      content::TAP_MULTIPLE_TARGETS_STRATEGY_NONE;
+#ifdef TENTA_CHROMIUM_BUILD
+  // Net Error handler on client side
+  TentaNetErrorClient::CreateForWebContents(web_contents_.get());
+  TentaNetErrorClient::FromWebContents(web_contents_.get())->SetListener(this);
 
-  XWalkContentsClientBridgeBase::Associate(web_contents_.get(),
-      contents_client_bridge_.get());
-  XWalkContentsIoThreadClientImpl::Associate(web_contents_.get(),
-      ScopedJavaLocalRef<jobject>(env, io_thread_client));
-  int render_process_id = web_contents_->GetRenderProcessHost()->GetID();
-  int render_frame_id = web_contents_->GetRoutingID();
-  RuntimeResourceDispatcherHostDelegateAndroid::OnIoThreadClientReady(
-      render_process_id, render_frame_id);
-  InterceptNavigationDelegate::Associate(web_contents_.get(),
-      base::WrapUnique(new InterceptNavigationDelegate(
-          env, intercept_navigation_delegate)));
+  // new tab created notify tabModel
+  // TODO(iotto) : Have a TabId
+  TentaTabModel * tab_model = TentaTabModelFactory::GetForContext(web_contents_->GetBrowserContext());
+  if ( tab_model ) {
+    tab_model->AddTab(tab_id, web_contents_.get());
+  } else {
+    TENTA_LOG_NET(ERROR) << __func__ << " NULL_tab_model";
+  }
+#endif // TENTA_CHROMIUM_BUILD
+
+  // XWalk does not use disambiguation popup for multiple targets.
+  content::RendererPreferences* prefs = web_contents_->GetMutableRendererPrefs();
+  prefs->tap_multiple_targets_strategy = content::TAP_MULTIPLE_TARGETS_STRATEGY_NONE;
+
+  XWalkContentsClientBridge::Associate(web_contents_.get(),
+                                           contents_client_bridge_.get());
+  XWalkContentsIoThreadClientImpl::Associate(web_contents_.get(), io_thread_client);
+
+  for (content::RenderFrameHost* rfh : web_contents_->GetAllFrames()) {
+    int render_process_id = rfh->GetProcess()->GetID();
+    int render_frame_id = rfh->GetRoutingID();
+
+    RuntimeResourceDispatcherHostDelegateAndroid::OnIoThreadClientReady(render_process_id, render_frame_id);
+  }
+  InterceptNavigationDelegate::Associate(
+      web_contents_.get(), base::WrapUnique(new InterceptNavigationDelegate(env, intercept_navigation_delegate)));
   web_contents_->SetDelegate(web_contents_delegate_.get());
 
   render_view_host_ext_.reset(new XWalkRenderViewHostExt(web_contents_.get()));
+#ifdef TENTA_CHROMIUM_BUILD
+  TentaHistoryStore* h_store = TentaHistoryStore::GetInstance();
+  h_store->SetController(reinterpret_cast<intptr_t>(this), &(web_contents_->GetController()));
+#endif
 }
 
-base::android::ScopedJavaLocalRef<jobject>
-XWalkContent::GetWebContents(JNIEnv* env, jobject obj) {
+base::android::ScopedJavaLocalRef<jobject> XWalkContent::GetWebContents(JNIEnv* env, jobject obj) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(web_contents_);
   if (!web_contents_)
@@ -214,14 +335,12 @@ XWalkContent::GetWebContents(JNIEnv* env, jobject obj) {
   return web_contents_->GetJavaWebContents();
 }
 
-void XWalkContent::SetPendingWebContentsForPopup(
-    std::unique_ptr<content::WebContents> pending) {
+void XWalkContent::SetPendingWebContentsForPopup(std::unique_ptr<content::WebContents> pending) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   if (pending_contents_.get()) {
     // TODO(benm): Support holding multiple pop up window requests.
-    LOG(WARNING) << "Blocking popup window creation as an outstanding "
-                 << "popup window is still pending.";
-    base::MessageLoop::current()->DeleteSoon(FROM_HERE, pending.release());
+    LOG(WARNING) << "Blocking popup window creation as an outstanding " << "popup window is still pending.";
+    base::MessageLoop::current()->task_runner()->DeleteSoon(FROM_HERE, pending.release());
     return;
   }
   pending_contents_.reset(new XWalkContent(std::move(pending)));
@@ -232,53 +351,61 @@ jlong XWalkContent::ReleasePopupXWalkContent(JNIEnv* env, jobject obj) {
   return reinterpret_cast<intptr_t>(pending_contents_.release());
 }
 
-void XWalkContent::ClearCache(
-    JNIEnv* env,
-    jobject obj,
-    jboolean include_disk_files) {
+void XWalkContent::ClearCache(JNIEnv* env, jobject obj, jboolean include_disk_files) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   render_view_host_ext_->ClearCache();
 
-  if (include_disk_files)
-    RemoveHttpDiskCache(web_contents_->GetRenderProcessHost(), std::string());
+  if (include_disk_files) {
+    content::BrowsingDataRemover* remover = content::BrowserContext::GetBrowsingDataRemover(
+        web_contents_->GetBrowserContext());
+    remover->Remove(
+        base::Time(),
+        base::Time::Max(),
+        content::BrowsingDataRemover::DATA_TYPE_CACHE,
+        content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB | content::BrowsingDataRemover::ORIGIN_TYPE_PROTECTED_WEB);
+  }
+
+//  if (include_disk_files)
+//    RemoveHttpDiskCache(web_contents_->GetRenderProcessHost(), std::string());
 }
 
-void XWalkContent::ClearCacheForSingleFile(
-    JNIEnv* env,
-    jobject obj,
-    jstring url) {
-  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-  std::string key = base::android::ConvertJavaStringToUTF8(env, url);
-
-  if (!key.empty())
-    RemoveHttpDiskCache(web_contents_->GetRenderProcessHost(), key);
+void XWalkContent::ClearCacheForSingleFile(JNIEnv* env, jobject obj,
+                                           jstring url) {
+  // TODO(iotto) : Use BrowsingDateRemover with FilterBuilder as in ClearCache
+//
+//  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+//  std::string key = base::android::ConvertJavaStringToUTF8(env, url);
+//
+//  if (!key.empty())
+//    RemoveHttpDiskCache(web_contents_->GetRenderProcessHost(), key);
 }
 
-ScopedJavaLocalRef<jstring> XWalkContent::DevToolsAgentId(JNIEnv* env,
-                                                          jobject obj) {
-  scoped_refptr<content::DevToolsAgentHost> agent_host(
-      content::DevToolsAgentHost::GetOrCreateFor(web_contents_.get()));
+ScopedJavaLocalRef<jstring> XWalkContent::DevToolsAgentId(JNIEnv* env, jobject obj) {
+  scoped_refptr<content::DevToolsAgentHost> agent_host(content::DevToolsAgentHost::GetOrCreateFor(web_contents_.get()));
   return base::android::ConvertUTF8ToJavaString(env, agent_host->GetId());
 }
 
 void XWalkContent::Destroy(JNIEnv* env, jobject obj) {
+#if defined(TENTA_CHROMIUM_BUILD)
+  ::tenta::fs::cache::MetaCacheBackend* backend = ::tenta::fs::cache::MetaCacheBackend::GetInstance();
+  backend->FlushBuffer();
+#endif
   delete this;
 }
 
-void XWalkContent::RequestNewHitTestDataAt(JNIEnv* env,
-                                           jobject obj,
-                                           jfloat x,
-                                           jfloat y,
-                                           jfloat touch_major) {
+void XWalkContent::RequestNewHitTestDataAt(
+    JNIEnv* env, const base::android::JavaParamRef<jobject>& obj, jfloat x,
+    jfloat y, jfloat touch_major) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   gfx::PointF touch_center(x, y);
   gfx::SizeF touch_area(touch_major, touch_major);
   render_view_host_ext_->RequestNewHitTestDataAt(touch_center, touch_area);
 }
 
-void XWalkContent::UpdateLastHitTestData(JNIEnv* env, jobject obj) {
+void XWalkContent::UpdateLastHitTestData(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (!render_view_host_ext_->HasNewHitTestData()) return;
+  if (!render_view_host_ext_->HasNewHitTestData())
+    return;
 
   const XWalkHitTestData& data = render_view_host_ext_->GetLastHitTestData();
   render_view_host_ext_->MarkHitTestDataRead();
@@ -286,8 +413,7 @@ void XWalkContent::UpdateLastHitTestData(JNIEnv* env, jobject obj) {
   // Make sure to null the java object if data is empty/invalid
   ScopedJavaLocalRef<jstring> extra_data_for_type;
   if (data.extra_data_for_type.length())
-    extra_data_for_type = ConvertUTF8ToJavaString(
-      env, data.extra_data_for_type);
+    extra_data_for_type = ConvertUTF8ToJavaString(env, data.extra_data_for_type);
 
   ScopedJavaLocalRef<jstring> href;
   if (data.href.length())
@@ -300,41 +426,35 @@ void XWalkContent::UpdateLastHitTestData(JNIEnv* env, jobject obj) {
   ScopedJavaLocalRef<jstring> img_src;
   if (data.img_src.is_valid())
     img_src = ConvertUTF8ToJavaString(env, data.img_src.spec());
-  Java_XWalkContent_updateHitTestData(env,
-                                      obj,
-                                      data.type,
-                                      extra_data_for_type.obj(),
-                                      href.obj(),
-                                      anchor_text.obj(),
-                                      img_src.obj());
+  Java_XWalkContent_updateHitTestData(env, obj, data.type, extra_data_for_type, href, anchor_text, img_src);
 }
 
-ScopedJavaLocalRef<jstring> XWalkContent::GetVersion(JNIEnv* env,
-                                                     jobject obj) {
+ScopedJavaLocalRef<jstring> XWalkContent::GetVersion(JNIEnv* env, jobject obj) {
   return base::android::ConvertUTF8ToJavaString(env, XWALK_VERSION);
 }
 
-void XWalkContent::SetJsOnlineProperty(JNIEnv* env,
-                                       jobject obj,
-                                       jboolean network_up) {
+static ScopedJavaLocalRef<jstring> JNI_XWalkContent_GetChromeVersion(
+    JNIEnv* env, const base::android::JavaParamRef<jclass>& jcaller) {
+  LOG(INFO) << "GetChromeVersion=" << version_info::GetVersionNumber();
+  return base::android::ConvertUTF8ToJavaString(env, version_info::GetVersionNumber());
+}
+
+void XWalkContent::SetJsOnlineProperty(JNIEnv* env, jobject obj, jboolean network_up) {
   render_view_host_ext_->SetJsOnlineProperty(network_up);
 }
 
-jboolean XWalkContent::SetManifest(JNIEnv* env,
-                                   jobject obj,
-                                   jstring path,
-                                   jstring manifest_string) {
+jboolean XWalkContent::SetManifest(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj,
+                                   const base::android::JavaParamRef<jstring>& path,
+                                   const base::android::JavaParamRef<jstring>& manifest_string) {
   std::string path_str = base::android::ConvertJavaStringToUTF8(env, path);
-  std::string json_input =
-      base::android::ConvertJavaStringToUTF8(env, manifest_string);
+  std::string json_input = base::android::ConvertJavaStringToUTF8(env, manifest_string);
 
   std::unique_ptr<base::Value> manifest_value = base::JSONReader::Read(json_input);
-  if (!manifest_value || !manifest_value->IsType(base::Value::TYPE_DICTIONARY))
-      return false;
+  if (!manifest_value || !manifest_value->IsType(base::Value::Type::DICTIONARY))
+    return false;
 
   xwalk::application::Manifest manifest(
-      base::WrapUnique(
-          static_cast<base::DictionaryValue*>(manifest_value.release())));
+      base::WrapUnique(static_cast<base::DictionaryValue*>(manifest_value.release())));
 
   std::string url;
   if (manifest.GetString(keys::kStartURLKey, &url)) {
@@ -352,51 +472,41 @@ jboolean XWalkContent::SetManifest(JNIEnv* env,
   } else if (manifest.GetString(keys::kLaunchWebURLKey, &url)) {
     PrintManifestDeprecationWarning(keys::kLaunchWebURLKey);
   } else {
-    NOTIMPLEMENTED();
+    NOTIMPLEMENTED()
+    ;
   }
 
   std::string match_patterns;
   const base::ListValue* xwalk_hosts = NULL;
-  if (manifest.GetList(
-          xwalk::application_manifest_keys::kXWalkHostsKey, &xwalk_hosts)) {
-      base::JSONWriter::Write(*xwalk_hosts, &match_patterns);
+  if (manifest.GetList(xwalk::application_manifest_keys::kXWalkHostsKey, &xwalk_hosts)) {
+    base::JSONWriter::Write(*xwalk_hosts, &match_patterns);
   }
   render_view_host_ext_->SetOriginAccessWhitelist(url, match_patterns);
 
   std::string csp;
   ManifestGetString(manifest, keys::kCSPKey, keys::kDeprecatedCSPKey, &csp);
-  XWalkBrowserContext* browser_context =
-      XWalkRunner::GetInstance()->browser_context();
+  XWalkBrowserContext* browser_context = XWalkRunner::GetInstance()->browser_context();
   CHECK(browser_context);
   browser_context->SetCSPString(csp);
 
-  ScopedJavaLocalRef<jstring> url_buffer =
-      base::android::ConvertUTF8ToJavaString(env, url);
+  ScopedJavaLocalRef<jstring> url_buffer = base::android::ConvertUTF8ToJavaString(env, url);
 
   if (manifest.HasPath(kDisplay)) {
     std::string display_string;
     if (manifest.GetString(kDisplay, &display_string)) {
       // TODO(David): update the handling process of the display strings
       // including fullscreen etc.
-      bool display_as_fullscreen =
-          base::LowerCaseEqualsASCII(display_string, "fullscreen");
-      Java_XWalkContent_onGetFullscreenFlagFromManifest(
-          env, obj, display_as_fullscreen ? JNI_TRUE : JNI_FALSE);
+      bool display_as_fullscreen = base::LowerCaseEqualsASCII(display_string, "fullscreen");
+      Java_XWalkContent_onGetFullscreenFlagFromManifest(env, obj, display_as_fullscreen ? JNI_TRUE : JNI_FALSE);
     }
   }
 
   // Check whether need to display launch screen. (Read from manifest.json)
-  if (ManifestHasPath(manifest,
-                      keys::kXWalkLaunchScreen,
-                      keys::kLaunchScreen)) {
+  if (ManifestHasPath(manifest, keys::kXWalkLaunchScreen, keys::kLaunchScreen)) {
     std::string ready_when;
     // Get the value of 'ready_when' from manifest.json
-    ManifestGetString(manifest,
-                      keys::kXWalkLaunchScreenReadyWhen,
-                      keys::kLaunchScreenReadyWhen,
-                      &ready_when);
-    ScopedJavaLocalRef<jstring> ready_when_buffer =
-        base::android::ConvertUTF8ToJavaString(env, ready_when);
+    ManifestGetString(manifest, keys::kXWalkLaunchScreenReadyWhen, keys::kLaunchScreenReadyWhen, &ready_when);
+    ScopedJavaLocalRef<jstring> ready_when_buffer = base::android::ConvertUTF8ToJavaString(env, ready_when);
 
     // Get the value of 'image_border'
     // 1. When 'launch_screen.[orientation]' was defined, but no 'image_border'
@@ -405,64 +515,48 @@ jboolean XWalkContent::SetManifest(JNIEnv* env,
     //    The value of 'image_border' will be empty.
     const char empty[] = "empty";
     std::string image_border_default;
-    ManifestGetString(manifest,
-                      keys::kXWalkLaunchScreenImageBorderDefault,
-                      keys::kLaunchScreenImageBorderDefault,
+    ManifestGetString(manifest, keys::kXWalkLaunchScreenImageBorderDefault, keys::kLaunchScreenImageBorderDefault,
                       &image_border_default);
-    if (image_border_default.empty() &&
-        ManifestHasPath(manifest,
-                        keys::kXWalkLaunchScreenDefault,
-                        keys::kLaunchScreenDefault)) {
+    if (image_border_default.empty() && ManifestHasPath(manifest, keys::kXWalkLaunchScreenDefault,
+                                                        keys::kLaunchScreenDefault)) {
       image_border_default = empty;
     }
 
     std::string image_border_landscape;
-    ManifestGetString(manifest,
-                      keys::kXWalkLaunchScreenImageBorderLandscape,
-                      keys::kLaunchScreenImageBorderLandscape,
+    ManifestGetString(manifest, keys::kXWalkLaunchScreenImageBorderLandscape, keys::kLaunchScreenImageBorderLandscape,
                       &image_border_landscape);
-    if (image_border_landscape.empty() &&
-        ManifestHasPath(manifest,
-                        keys::kXWalkLaunchScreenLandscape,
-                        keys::kLaunchScreenLandscape)) {
+    if (image_border_landscape.empty() && ManifestHasPath(manifest, keys::kXWalkLaunchScreenLandscape,
+                                                          keys::kLaunchScreenLandscape)) {
       image_border_landscape = empty;
     }
 
     std::string image_border_portrait;
-    ManifestGetString(manifest,
-                      keys::kXWalkLaunchScreenImageBorderPortrait,
-                      keys::kLaunchScreenImageBorderPortrait,
+    ManifestGetString(manifest, keys::kXWalkLaunchScreenImageBorderPortrait, keys::kLaunchScreenImageBorderPortrait,
                       &image_border_portrait);
-    if (image_border_portrait.empty() &&
-        ManifestHasPath(manifest,
-                        keys::kXWalkLaunchScreenPortrait,
-                        keys::kLaunchScreenPortrait)) {
+    if (image_border_portrait.empty() && ManifestHasPath(manifest, keys::kXWalkLaunchScreenPortrait,
+                                                         keys::kLaunchScreenPortrait)) {
       image_border_portrait = empty;
     }
 
-    std::string image_border = image_border_default + ';' +
-        image_border_landscape  + ';' + image_border_portrait;
-    ScopedJavaLocalRef<jstring> image_border_buffer =
-        base::android::ConvertUTF8ToJavaString(env, image_border);
+    std::string image_border = image_border_default + ';' + image_border_landscape + ';' + image_border_portrait;
+    ScopedJavaLocalRef<jstring> image_border_buffer = base::android::ConvertUTF8ToJavaString(env, image_border);
 
     Java_XWalkContent_onGetUrlAndLaunchScreenFromManifest(
-        env, obj, url_buffer.obj(), ready_when_buffer.obj(),
-        image_border_buffer.obj());
+                                                          env,
+                                                          obj, url_buffer,
+                                                          ready_when_buffer,
+                                                          image_border_buffer);
   } else {
     // No need to display launch screen, load the url directly.
-    Java_XWalkContent_onGetUrlFromManifest(env, obj, url_buffer.obj());
+    Java_XWalkContent_onGetUrlFromManifest(env, obj, url_buffer);
   }
   std::string view_background_color;
-  ManifestGetString(manifest,
-                    keys::kXWalkViewBackgroundColor,
-                    keys::kViewBackgroundColor,
-                    &view_background_color);
+  ManifestGetString(manifest, keys::kXWalkViewBackgroundColor, keys::kViewBackgroundColor, &view_background_color);
 
   if (view_background_color.empty())
     return true;
   unsigned int view_background_color_int = 0;
-  if (!base::HexStringToUInt(view_background_color.substr(1),
-      &view_background_color_int)) {
+  if (!base::HexStringToUInt(view_background_color.substr(1), &view_background_color_int)) {
     LOG(ERROR) << "Background color format error! Valid background color"
                "should be(Alpha Red Green Blue): #ff01abcd";
     return false;
@@ -473,102 +567,368 @@ jboolean XWalkContent::SetManifest(JNIEnv* env,
 
 jint XWalkContent::GetRoutingID(JNIEnv* env, jobject obj) {
   DCHECK(web_contents_.get());
-  return web_contents_->GetRoutingID();
+  return web_contents_->GetRenderViewHost()->GetRoutingID();
 }
 
-base::android::ScopedJavaLocalRef<jbyteArray> XWalkContent::GetState(
-    JNIEnv* env,
-    jobject obj) {
+base::android::ScopedJavaLocalRef<jbyteArray> XWalkContent::GetState(JNIEnv* env, jobject obj) {
   if (!web_contents_->GetController().GetEntryCount())
     return ScopedJavaLocalRef<jbyteArray>();
 
   base::Pickle pickle;
-  if (!WriteToPickle(*web_contents_, &pickle)) {
-    return ScopedJavaLocalRef<jbyteArray>();
-  } else {
-    return base::android::ToJavaByteArray(
-        env,
-        reinterpret_cast<const uint8_t*>(pickle.data()),
-        pickle.size());
-  }
+  WriteToPickle(*web_contents_, &pickle);
+  return base::android::ToJavaByteArray(env, reinterpret_cast<const uint8_t*>(pickle.data()), pickle.size());
 }
 
 jboolean XWalkContent::SetState(JNIEnv* env, jobject obj, jbyteArray state) {
   std::vector<uint8_t> state_vector;
   base::android::JavaByteArrayToByteVector(env, state, &state_vector);
 
-  base::Pickle pickle(reinterpret_cast<const char*>(&state_vector[0]),
-                state_vector.size());
+  base::Pickle pickle(reinterpret_cast<const char*>(&state_vector[0]), state_vector.size());
   base::PickleIterator iterator(pickle);
 
   return RestoreFromPickle(&iterator, web_contents_.get());
 }
 
-static jlong Init(JNIEnv* env, const JavaParamRef<jobject>& obj) {
-  std::unique_ptr<WebContents> web_contents(content::WebContents::Create(
-      content::WebContents::CreateParams(
-          XWalkRunner::GetInstance()->browser_context())));
-  return reinterpret_cast<intptr_t>(new XWalkContent(std::move(web_contents)));
+
+/************** History in MetaFs *********************/
+/**
+ *
+ */
+#ifdef TENTA_CHROMIUM_BUILD
+int XWalkContent::OpenHistoryFile(JNIEnv* env, const JavaParamRef<jstring>& id, const JavaParamRef<jstring>& key,
+                                  scoped_refptr<::tenta::fs::MetaFile>& fileOut,
+                                  scoped_refptr<::tenta::fs::MetaDb>& dbOut, int mode) {
+  using namespace metafs;
+  using namespace ::base::android;
+
+  MetaFsManager * mng = MetaFsManager::GetInstance();
+  if (mng == nullptr) {
+#if TENTA_LOG_ENABLE == 1
+    LOG(ERROR) << "MetaFsManager::GetInstance() NULL";
+#endif
+    return ERR_NULL_POINTER;
+  }
+
+  std::string keyStr;
+
+  ConvertJavaStringToUTF8(env, key, &keyStr);
+
+  int result;
+
+  result = mng->OpenDb(cHistoryDb, keyStr, cHistoryBlockSize, dbOut);
+  if (result != FS_OK) {
+#if TENTA_LOG_ENABLE == 1
+    LOG(ERROR) << "OpenDb failed";
+#endif
+    return mng->error();
+  }
+
+  if (dbOut.get() == nullptr) {
+#if TENTA_LOG_ENABLE == 1
+    LOG(ERROR) << "MetaDb NULL";
+#endif
+    return ERR_INVALID_POINTER;
+  }
+
+  std::string idStr;
+  ConvertJavaStringToUTF8(env, id, &idStr);
+
+  scoped_refptr<MetaFile> weak_file;
+
+  int status;
+  status = dbOut->OpenFile(idStr, "", weak_file, mode);
+
+  if (status != FS_OK) {
+#if TENTA_LOG_ENABLE == 1
+    LOG(ERROR) << "OpenFile '" << idStr << "' failed " << status;
+#endif
+    return status;
+  }
+
+  fileOut = weak_file;
+  if (fileOut.get() == nullptr) {
+#if TENTA_LOG_ENABLE == 1
+    LOG(ERROR) << "File pointer NULL";
+#endif
+    return ERR_INVALID_POINTER;
+  }
+
+  return FS_OK;
+}
+#endif // TENTA_CHROMIUM_BUILD
+
+/**
+ *
+ */
+jint XWalkContent::SaveOldHistory(JNIEnv* env, const JavaParamRef<jobject>& jcaller,
+                                  const JavaParamRef<jbyteArray>& state, const JavaParamRef<jstring>& id,
+                                  const JavaParamRef<jstring>& key) {
+#ifndef TENTA_CHROMIUM_BUILD
+  LOG(WARNING) << __func__ << " Not implemented!";
+  return -1;
+#else // TENTA_CHROMIUM_BUILD
+
+  using namespace metafs;
+
+  scoped_refptr<MetaDb> db;
+  scoped_refptr<MetaFile> file;
+  AutoCloseMetaDb mdbClose(db);
+  AutoCloseMetaFile mvfClose(file);
+
+  int status;
+  status = OpenHistoryFile(env, id, key, file, db, MetaDb::IO_CREATE_IF_NOT_EXISTS | MetaDb::IO_TRUNCATE_IF_EXISTS);
+
+  if (status != FS_OK) {
+    return status;
+  }
+
+  std::unique_ptr<JavaByteArray> data(new JavaByteArray());
+  if (data.get() == nullptr) {
+#if TENTA_LOG_ENABLE == 1
+    LOG(ERROR) << "SaveOldHistory: JavaByteArray not created, out of memory";
+#endif
+    return ERR_OUT_MEMORY;
+  }
+
+  status = data->init(env, state);
+  if (status != FS_OK) {
+#if TENTA_LOG_ENABLE == 1
+    LOG(ERROR) << "SaveOldHistory: JavaByteArray init failed " << status;
+#endif
+    return status;
+  }
+
+  int iolen = data->len();
+  status = file->Append(data->data(), iolen);
+  if (status != FS_OK) {
+    return status;
+  }
+
+#if TENTA_LOG_ENABLE == 1
+  LOG(INFO) << __func__ << "_OK length=" << iolen;
+#endif
+  return iolen;
+#endif // TENTA_CHROMIUM_BUILD
 }
 
-bool RegisterXWalkContent(JNIEnv* env) {
-  return RegisterNativesImpl(env);
+/**
+ *
+ */
+jint XWalkContent::SaveHistory(JNIEnv* env, const JavaParamRef<jobject>& obj, const JavaParamRef<jstring>& id,
+                               const JavaParamRef<jstring>& key) {
+#ifndef TENTA_CHROMIUM_BUILD
+  LOG(WARNING) << __func__ << " Not implemented!";
+  return -1;
+#else // TENTA_CHROMIUM_BUILD
+
+  using namespace metafs;
+  using namespace ::base::android;
+
+  std::unique_ptr<base::Pickle> pickle(new base::Pickle());
+
+  if (pickle.get() == nullptr) {
+#if TENTA_LOG_ENABLE == 1
+    LOG(ERROR) << "SaveHistory: Pickle not created, out of memory";
+#endif
+    return ERR_OUT_MEMORY;
+  }
+
+  WriteToPickle(*web_contents_, pickle.get());
+
+  scoped_refptr<MetaDb> db;
+  scoped_refptr<MetaFile> file;
+  AutoCloseMetaDb mdbClose(db);
+  AutoCloseMetaFile mvfClose(file);
+
+  int status;
+  status = OpenHistoryFile(env, id, key, file, db, MetaDb::IO_CREATE_IF_NOT_EXISTS | MetaDb::IO_TRUNCATE_IF_EXISTS);
+
+  if (status != FS_OK) {
+    return status;
+  }
+
+  int iolen = pickle->size();
+  status = file->Append(reinterpret_cast<const char*>(pickle->data()), iolen);
+  if (status != FS_OK) {
+    return status;
+  }
+
+#if TENTA_LOG_ENABLE == 1
+  LOG(ERROR) << __func__ << "_OK length=" << iolen;
+#endif
+  return iolen;
+#endif // TENTA_CHROMIUM_BUILD
+}
+
+/**
+ *
+ */
+jint XWalkContent::RestoreHistory(JNIEnv* env, const JavaParamRef<jobject>& obj, const JavaParamRef<jstring>& id,
+                                  const JavaParamRef<jstring>& key) {
+#ifndef TENTA_CHROMIUM_BUILD
+  LOG(WARNING) << __func__ << " Not implemented!";
+  return -1;
+#else // TENTA_CHROMIUM_BUILD
+
+  using namespace metafs;
+  using namespace ::base::android;
+
+  scoped_refptr<MetaDb> db;
+  scoped_refptr<MetaFile> file;
+  AutoCloseMetaDb mdbClose(db);
+  AutoCloseMetaFile mvfClose(file);
+
+  int status;
+  status = OpenHistoryFile(env, id, key, file, db, MetaDb::IO_CREATE_IF_NOT_EXISTS | MetaDb::IO_OPEN_EXISTING);
+
+  if (status != FS_OK) {
+    return status;
+  }
+
+  int length = file->length();
+
+  if (length < 0) {
+#if TENTA_LOG_ENABLE == 1
+    LOG(ERROR) << "RestoreHistory get file length " << length;
+#endif
+    return ERR_INVALID_FILE_DATA;
+  }
+
+  if (length == 0) {
+#if TENTA_LOG_ENABLE == 1
+    LOG(INFO) << "RestoreHistory empty " << length;
+#endif
+    return FS_OK;  // zero data
+    // Safe to return since this webView was just created
+    // so it has no history to be cleared
+  }
+
+  std::vector<char> state_vector;
+  state_vector.resize(length);
+
+  status = file->Read(0, &state_vector[0], length, nullptr);
+  if (status != FS_OK) {
+#if TENTA_LOG_ENABLE == 1
+    LOG(ERROR) << "RestoreHistory read error " << status;
+#endif
+    return status;
+  }
+
+  base::Pickle pickle(&state_vector[0], length);
+  state_vector.clear();
+
+  base::PickleIterator iterator(pickle);
+  if (!RestoreFromPickle(&iterator, web_contents_.get())) {
+#if TENTA_LOG_ENABLE == 1
+    LOG(ERROR) << "Restore pickle error " << pickle.size() << " payLoad: " << pickle.payload_size();
+#endif
+    return ERR_XWALK_INTERNAL;
+  }
+
+#if TENTA_LOG_ENABLE == 1
+  LOG(ERROR) << __func__ << "_OK length=" << pickle.payload_size();
+#endif
+
+  return pickle.payload_size();
+#endif // TENTA_CHROMIUM_BUILD
+}
+
+/**
+ *
+ */
+jint XWalkContent::NukeHistory(JNIEnv* env, const JavaParamRef<jobject>& obj, const JavaParamRef<jstring>& id,
+                               const JavaParamRef<jstring>& key) {
+#ifndef TENTA_CHROMIUM_BUILD
+  LOG(WARNING) << __func__ << " Not implemented!";
+  return -1;
+#else // TENTA_CHROMIUM_BUILD
+
+  using namespace metafs;
+
+  scoped_refptr<MetaDb> db;
+  scoped_refptr<MetaFile> file;
+  AutoCloseMetaDb mdbClose(db);
+  AutoCloseMetaFile mvfClose(file);
+
+  int status;
+  status = OpenHistoryFile(env, id, key, file, db, MetaDb::IO_OPEN_EXISTING);
+
+  if (status != FS_OK) {
+    return status;
+  }
+
+  status = file->Delete();
+
+  if (status != FS_OK) {
+    return status;
+  }
+
+#if TENTA_LOG_ENABLE == 1
+  LOG(ERROR) << __func__ << "_OK length=" << 0;
+#endif
+
+  return FS_OK;
+#endif // TENTA_CHROMIUM_BUILD
+}
+
+/**
+ * TODO(iotto) : Deprecated remove!
+ */
+jint XWalkContent::ReKeyHistory(JNIEnv* env, const JavaParamRef<jobject>& obj, const JavaParamRef<jstring>& oldKey,
+                                const JavaParamRef<jstring>& newKey) {
+  return -1;
+}
+
+/************ End MetaFS ****************/
+static jlong JNI_XWalkContent_Init(JNIEnv* env, const JavaParamRef<jobject>& obj) {
+  std::unique_ptr<WebContents> web_contents(
+      content::WebContents::Create(content::WebContents::CreateParams(XWalkRunner::GetInstance()->browser_context())));
+  return reinterpret_cast<intptr_t>(new XWalkContent(std::move(web_contents)));
 }
 
 namespace {
 
-void ShowGeolocationPromptHelperTask(
-    const JavaObjectWeakGlobalRef& java_ref,
-    const GURL& origin) {
+void ShowGeolocationPromptHelperTask(const JavaObjectWeakGlobalRef& java_ref, const GURL& origin) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> j_ref = java_ref.get(env);
   if (j_ref.obj()) {
     ScopedJavaLocalRef<jstring> j_origin(
-        ConvertUTF8ToJavaString(env, origin.spec()));
-    Java_XWalkContent_onGeolocationPermissionsShowPrompt(env,
-                                                         j_ref.obj(),
-                                                         j_origin.obj());
+                                         ConvertUTF8ToJavaString(env, origin.spec()));
+    Java_XWalkContent_onGeolocationPermissionsShowPrompt(env, j_ref,
+                                                         j_origin);
   }
 }
 
-void ShowGeolocationPromptHelper(const JavaObjectWeakGlobalRef& java_ref,
-                                 const GURL& origin) {
+void ShowGeolocationPromptHelper(const JavaObjectWeakGlobalRef& java_ref, const GURL& origin) {
   JNIEnv* env = AttachCurrentThread();
   if (java_ref.get(env).obj()) {
-    content::BrowserThread::PostTask(
-        content::BrowserThread::UI,
-        FROM_HERE,
-        base::Bind(&ShowGeolocationPromptHelperTask,
-                   java_ref,
-                   origin));
+    content::BrowserThread::PostTask(content::BrowserThread::UI,
+    FROM_HERE,
+    base::Bind(&ShowGeolocationPromptHelperTask,
+        java_ref,
+        origin));
   }
 }
-}  // anonymous namespace
+}
+// anonymous namespace
 
-void XWalkContent::ShowGeolocationPrompt(
-    const GURL& requesting_frame,
-    const base::Callback<void(bool)>& callback) { // NOLINT
-  GURL origin = requesting_frame.GetOrigin();
-  bool show_prompt = pending_geolocation_prompts_.empty();
-  pending_geolocation_prompts_.push_back(OriginCallback(origin, callback));
-  if (show_prompt) {
-    ShowGeolocationPromptHelper(java_ref_, origin);
-  }
-}
+                                     void XWalkContent::ShowGeolocationPrompt(const GURL& requesting_frame, const base::Callback<void(bool)>& callback) {  // NOLINT
+      GURL origin = requesting_frame.GetOrigin();
+      bool show_prompt = pending_geolocation_prompts_.empty();
+      pending_geolocation_prompts_.push_back(OriginCallback(origin, callback));
+      if (show_prompt) {
+        ShowGeolocationPromptHelper(java_ref_, origin);
+      }
+    }
 
 // Called by Java.
-void XWalkContent::InvokeGeolocationCallback(JNIEnv* env,
-                                             jobject obj,
-                                             jboolean value,
-                                             jstring origin) {
+void XWalkContent::InvokeGeolocationCallback(JNIEnv* env, jobject obj, jboolean value, jstring origin) {
   GURL callback_origin(base::android::ConvertJavaStringToUTF16(env, origin));
-  if (callback_origin.GetOrigin() ==
-      pending_geolocation_prompts_.front().first) {
+  if (callback_origin.GetOrigin() == pending_geolocation_prompts_.front().first) {
     pending_geolocation_prompts_.front().second.Run(value);
     pending_geolocation_prompts_.pop_front();
     if (!pending_geolocation_prompts_.empty()) {
-      ShowGeolocationPromptHelper(java_ref_,
-                                  pending_geolocation_prompts_.front().first);
+      ShowGeolocationPromptHelper(java_ref_, pending_geolocation_prompts_.front().first);
     }
   }
 }
@@ -591,11 +951,10 @@ void XWalkContent::HideGeolocationPrompt(const GURL& origin) {
     JNIEnv* env = AttachCurrentThread();
     ScopedJavaLocalRef<jobject> j_ref = java_ref_.get(env);
     if (j_ref.obj()) {
-      Java_XWalkContent_onGeolocationPermissionsHidePrompt(env, j_ref.obj());
+      Java_XWalkContent_onGeolocationPermissionsHidePrompt(env, j_ref);
     }
     if (!pending_geolocation_prompts_.empty()) {
-      ShowGeolocationPromptHelper(java_ref_,
-                            pending_geolocation_prompts_.front().first);
+      ShowGeolocationPromptHelper(java_ref_, pending_geolocation_prompts_.front().first);
     }
   }
 }
@@ -606,36 +965,60 @@ void XWalkContent::SetBackgroundColor(JNIEnv* env, jobject obj, jint color) {
   render_view_host_ext_->SetBackgroundColor(color);
 }
 
-void XWalkContent::SetOriginAccessWhitelist(JNIEnv* env, jobject obj,
-                                            jstring url,
-                                            jstring match_patterns) {
+void XWalkContent::SetOriginAccessWhitelist(JNIEnv* env, jobject obj, jstring url, jstring match_patterns) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  render_view_host_ext_->SetOriginAccessWhitelist(
-      base::android::ConvertJavaStringToUTF8(env, url),
-      base::android::ConvertJavaStringToUTF8(env, match_patterns));
+  render_view_host_ext_->SetOriginAccessWhitelist(base::android::ConvertJavaStringToUTF8(env, url),
+                                                  base::android::ConvertJavaStringToUTF8(env, match_patterns));
 }
 
-base::android::ScopedJavaLocalRef<jbyteArray> XWalkContent::GetCertificate(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
+base::android::ScopedJavaLocalRef<jbyteArray> XWalkContent::GetCertificate(JNIEnv* env,
+                                                                           const JavaParamRef<jobject>& obj) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  content::NavigationEntry* entry =
-      web_contents_->GetController().GetLastCommittedEntry();
-  if (!entry)
+  content::NavigationEntry* entry = web_contents_->GetController().GetLastCommittedEntry();
+  if (!entry || !entry->GetSSL().certificate) {
     return ScopedJavaLocalRef<jbyteArray>();
-  // Get the certificate
-  int cert_id = entry->GetSSL().cert_id;
-  scoped_refptr<net::X509Certificate> cert;
-  bool ok = content::CertStore::GetInstance()->RetrieveCert(cert_id, &cert);
-  if (!ok)
-    return ScopedJavaLocalRef<jbyteArray>();
+  }
 
   // Convert the certificate and return it
   std::string der_string;
+  net::X509Certificate::GetDEREncoded(entry->GetSSL().certificate->os_cert_handle(), &der_string);
+  return base::android::ToJavaByteArray(env, reinterpret_cast<const uint8_t*>(der_string.data()), der_string.length());
+}
+
+/**
+ *
+ */
+base::android::ScopedJavaLocalRef<jobjectArray> XWalkContent::GetCertificateChain(JNIEnv* env,
+                                                                                  const JavaParamRef<jobject>& obj) {
+
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  content::NavigationEntry* entry = web_contents_->GetController().GetLastCommittedEntry();
+  if (!entry || !entry->GetSSL().certificate) {
+    return ScopedJavaLocalRef<jobjectArray>();
+  }
+
+  // Get the certificate
+
+  scoped_refptr<net::X509Certificate> cert = entry->GetSSL().certificate;
+
+  std::vector<std::string> cert_chain;
+  // Convert the certificate and return it
+  std::string der_string;
   net::X509Certificate::GetDEREncoded(cert->os_cert_handle(), &der_string);
-  return base::android::ToJavaByteArray(
-      env, reinterpret_cast<const uint8_t*>(der_string.data()),
-      der_string.length());
+
+  cert_chain.push_back(der_string);  // store main cert
+
+  // iterate over the list of intermediates
+  const net::X509Certificate::OSCertHandles& intermediates = cert->GetIntermediateCertificates();
+
+  for (size_t i = 0; i < intermediates.size(); ++i) {
+    der_string.clear();
+
+    net::X509Certificate::GetDEREncoded(intermediates[i], &der_string);
+    cert_chain.push_back(der_string);  // store intermediates
+
+  }
+  return base::android::ToJavaArrayOfByteArray(env, cert_chain);
 }
 
 FindHelper* XWalkContent::GetFindHelper() {
@@ -647,16 +1030,13 @@ FindHelper* XWalkContent::GetFindHelper() {
   return find_helper_.get();
 }
 
-void XWalkContent::FindAllAsync(JNIEnv* env,
-                                const JavaParamRef<jobject>& obj,
+void XWalkContent::FindAllAsync(JNIEnv* env, const JavaParamRef<jobject>& obj,
                                 const JavaParamRef<jstring>& search_string) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   GetFindHelper()->FindAllAsync(ConvertJavaStringToUTF16(env, search_string));
 }
 
-void XWalkContent::FindNext(JNIEnv* env,
-                            const JavaParamRef<jobject>& obj,
-                            jboolean forward) {
+void XWalkContent::FindNext(JNIEnv* env, const JavaParamRef<jobject>& obj, jboolean forward) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   GetFindHelper()->FindNext(forward);
 }
@@ -666,17 +1046,29 @@ void XWalkContent::ClearMatches(JNIEnv* env, const JavaParamRef<jobject>& obj) {
   GetFindHelper()->ClearMatches();
 }
 
-void XWalkContent::OnFindResultReceived(int active_ordinal,
-                                        int match_count,
-                                        bool finished) {
+void XWalkContent::OnFindResultReceived(int active_ordinal, int match_count, bool finished) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
   if (obj.is_null())
     return;
 
-  Java_XWalkContent_onFindResultReceived(
-      env, obj.obj(), active_ordinal, match_count, finished);
+  Java_XWalkContent_onFindResultReceived(env, obj, active_ordinal, match_count, finished);
+}
+
+/**
+ *
+ */
+void XWalkContent::OnOpenDnsSettings(const GURL& failedUrl) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
+  if (obj.is_null())
+    return;
+
+  ScopedJavaLocalRef<jstring> j_failed_url(ConvertUTF8ToJavaString(env, failedUrl.spec()));
+
+  Java_XWalkContent_onOpenDnsSettings(env, obj, j_failed_url);
 }
 
 }  // namespace xwalk
