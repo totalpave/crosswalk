@@ -52,7 +52,7 @@ class DepsFetcher(object):
                        os.path.basename(self._new_gclient_file))
     # As of revision 454e53abae6e4d68ee992b0a93a4174b75519393,
     # src/xwalk/buildtools does not pass gclient's syntax validation.
-    gclient_cmd.append('--disable-syntax-validation')
+    # gclient_cmd.append('--disable-syntax-validation')
     gclient_utils.CheckCallAndFilterAndHeader(gclient_cmd,
         always=self._options.verbose, cwd=self._root_dir)
 
