@@ -75,6 +75,9 @@ solutions = [
       'src/chrome/tools/test/reference_build/chrome_linux': None,
       'src/chrome/tools/test/reference_build/chrome_mac': None,
       'src/chrome/tools/test/reference_build/chrome_win': None,
+
+      # Overrides
+      'src/third_party/angle': crosswalk_git + '/angle.git@totalpave/master'
     },
     "custom_vars": {
       "checkout_android": True,
