@@ -29,7 +29,6 @@ XWalkExtensionServer::XWalkExtensionServer()
 
 XWalkExtensionServer::~XWalkExtensionServer() {
   DeleteInstanceMap();
-  STLDeleteValues(&extensions_);
 }
 
 bool XWalkExtensionServer::OnMessageReceived(const IPC::Message& message) {
@@ -52,20 +51,28 @@ bool XWalkExtensionServer::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
+void XWalkExtensionServer::OnChannelConnected(int32_t peer_pid) {
+  _peer_pid = peer_pid;
+}
+
 void XWalkExtensionServer::OnCreateInstance(int64_t instance_id,
     std::string name) {
   ExtensionMap::const_iterator it = extensions_.find(name);
 
   if (it == extensions_.end()) {
+#if TENTA_LOG_ENABLE == 1
     LOG(WARNING) << "Can't create instance of extension: " << name
         << ". Extension is not registered.";
+#endif
     return;
   }
 
   XWalkExtensionInstance* instance = it->second->CreateInstance();
   if (!instance) {
+#if TENTA_LOG_ENABLE == 1
     LOG(WARNING) << "Can't create instance of extension: " << name
         << ". CreateInstance() return invalid pointer.";
+#endif
     return;
   }
 
@@ -88,8 +95,10 @@ void XWalkExtensionServer::OnPostMessageToNative(int64_t instance_id,
     const base::ListValue& msg) {
   InstanceMap::const_iterator it = instances_.find(instance_id);
   if (it == instances_.end()) {
+#if TENTA_LOG_ENABLE == 1
     LOG(WARNING) << "Can't PostMessage to invalid Extension instance id: "
                  << instance_id;
+#endif
     return;
   }
 
@@ -155,20 +164,27 @@ bool ValidateExtensionIdentifier(const std::string& name) {
 bool XWalkExtensionServer::RegisterExtension(
     std::unique_ptr<XWalkExtension> extension) {
   if (!ValidateExtensionIdentifier(extension->name())) {
+#if TENTA_LOG_ENABLE == 1
     LOG(WARNING) << "Ignoring extension with invalid name: "
                  << extension->name();
+#endif
     return false;
   }
 
-  if (ContainsKey(extension_symbols_, extension->name())) {
+  auto it = extension_symbols_.find(extension->name());
+  if (it != extension_symbols_.end()) {
+#if TENTA_LOG_ENABLE == 1
     LOG(WARNING) << "Ignoring extension with name already registered: "
                  << extension->name();
+#endif
     return false;
   }
 
   if (!ValidateExtensionEntryPoints(extension->entry_points())) {
+#if TENTA_LOG_ENABLE == 1
     LOG(WARNING) << "Ignoring extension '" << extension->name()
                  << "' with invalid entry point.";
+#endif
     return false;
   }
 
@@ -180,19 +196,21 @@ bool XWalkExtensionServer::RegisterExtension(
 
   std::string name = extension->name();
   extension_symbols_.insert(name);
-  extensions_[name] = extension.release();
+  extensions_[name] = std::move(extension);
   return true;
 }
 
 bool XWalkExtensionServer::ContainsExtension(
     const std::string& extension_name) const {
-  return ContainsKey(extensions_, extension_name);
+  auto it = extensions_.find(extension_name);
+
+  return it != extensions_.end();
 }
 
 void XWalkExtensionServer::PostMessageToJSCallback(
     int64_t instance_id, std::unique_ptr<base::Value> msg) {
   base::ListValue wrapped_msg;
-  wrapped_msg.Append(msg.release());
+  wrapped_msg.Append(std::move(msg));
 
   std::unique_ptr<IPC::Message> message(
       new XWalkExtensionClientMsg_PostMessageToJS(instance_id, wrapped_msg));
@@ -207,18 +225,19 @@ void XWalkExtensionServer::PostMessageToJSCallback(
 
   base::SharedMemory shared_memory;
   if (!shared_memory.Create(options) || !shared_memory.Map(message->size())) {
+#if TENTA_LOG_ENABLE == 1
     LOG(WARNING) << "Can't create shared memory to send out of line message";
+#endif
     return;
   }
 
   memcpy(shared_memory.memory(), message->data(), message->size());
 
-  base::SharedMemoryHandle handle;
-  base::Process process =
-      base::Process::OpenWithExtraPrivileges(channel_proxy_->GetPeerPID());
-  CHECK(process.IsValid());
-  if (!shared_memory.GiveReadOnlyToProcess(process.Handle(), &handle)) {
-    LOG(WARNING) << "Can't share memory handle to send out of line message";
+  base::SharedMemoryHandle handle = shared_memory.GetReadOnlyHandle();
+  if ( !handle.IsValid() ) {
+#if TENTA_LOG_ENABLE == 1
+    LOG(WARNING) << __func__ <<  " Can't share memory handle to send out of line message";
+#endif
     return;
   }
 
@@ -231,20 +250,24 @@ void XWalkExtensionServer::SendSyncReplyToJSCallback(
 
   InstanceMap::iterator it = instances_.find(instance_id);
   if (it == instances_.end()) {
+#if TENTA_LOG_ENABLE == 1
     LOG(WARNING) << "Can't SendSyncMessage to invalid Extension instance id: "
                  << instance_id;
+#endif
     return;
   }
 
   InstanceExecutionData& data = it->second;
   if (!data.pending_reply) {
+#if TENTA_LOG_ENABLE == 1
     LOG(WARNING) << "There's no pending SyncMessage for instance id: "
                  << instance_id;
+#endif
     return;
   }
 
   base::ListValue wrapped_reply;
-  wrapped_reply.Append(reply.release());
+  wrapped_reply.Append(std::move(reply));
   XWalkExtensionServerMsg_SendSyncMessageToNative::WriteReplyParams(
       data.pending_reply, wrapped_reply);
   Send(data.pending_reply);
@@ -267,8 +290,10 @@ void XWalkExtensionServer::DeleteInstanceMap() {
   instances_.clear();
 
   if (pending_replies_left > 0) {
+#if TENTA_LOG_ENABLE == 1
     LOG(WARNING) << pending_replies_left
                  << " pending replies left when destroying server.";
+#endif
   }
 }
 
@@ -278,9 +303,12 @@ bool XWalkExtensionServer::ValidateExtensionEntryPoints(
     if (!ValidateExtensionIdentifier(entry_point))
       return false;
 
-    if (ContainsKey(extension_symbols_, entry_point)) {
+    auto it = extension_symbols_.find(entry_point);
+    if (it != extension_symbols_.end()) {
+#if TENTA_LOG_ENABLE == 1
       LOG(WARNING) << "Entry point '" << entry_point
                    << "' clashes with another extension entry point.";
+#endif
       return false;
     }
   }
@@ -292,15 +320,19 @@ void XWalkExtensionServer::OnSendSyncMessageToNative(int64_t instance_id,
     const base::ListValue& msg, IPC::Message* ipc_reply) {
   InstanceMap::iterator it = instances_.find(instance_id);
   if (it == instances_.end()) {
+#if TENTA_LOG_ENABLE == 1
     LOG(WARNING) << "Can't SendSyncMessage to invalid Extension instance id: "
                  << instance_id;
+#endif
     return;
   }
 
   InstanceExecutionData& data = it->second;
   if (data.pending_reply) {
+#if TENTA_LOG_ENABLE == 1
     LOG(WARNING) << "There's already a pending Sync Message for "
                  << "Extension instance id: " << instance_id;
+#endif
     return;
   }
 
@@ -322,7 +354,9 @@ void XWalkExtensionServer::OnSendSyncMessageToNative(int64_t instance_id,
 void XWalkExtensionServer::OnDestroyInstance(int64_t instance_id) {
   InstanceMap::iterator it = instances_.find(instance_id);
   if (it == instances_.end()) {
+#if TENTA_LOG_ENABLE == 1
     LOG(WARNING) << "Can't destroy inexistent instance:" << instance_id;
+#endif
     return;
   }
 
@@ -339,7 +373,7 @@ void XWalkExtensionServer::OnGetExtensions(
   ExtensionMap::iterator it = extensions_.begin();
   for (; it != extensions_.end(); ++it) {
     XWalkExtensionServerMsg_ExtensionRegisterParams extension_parameters;
-    XWalkExtension* extension = it->second;
+    XWalkExtension* extension = it->second.get();
 
     extension_parameters.name = extension->name();
     extension_parameters.js_api = extension->javascript_api();
@@ -371,14 +405,16 @@ base::FilePath::StringType GetNativeLibraryPattern() {
 
 std::vector<std::string> RegisterExternalExtensionsInDirectory(
     XWalkExtensionServer* server, const base::FilePath& dir,
-    std::unique_ptr<base::DictionaryValue::Storage> runtime_variables) {
+    std::unique_ptr<base::DictionaryValue::DictStorage> runtime_variables) {
   CHECK(server);
 
   std::vector<std::string> registered_extensions;
 
   if (!base::DirectoryExists(dir)) {
+#if TENTA_LOG_ENABLE == 1
     LOG(WARNING) << "Couldn't load external extensions from non-existent"
                  << " directory " << dir.AsUTF8Unsafe();
+#endif
     return registered_extensions;
   }
 
@@ -394,7 +430,7 @@ std::vector<std::string> RegisterExternalExtensionsInDirectory(
     // as an identifier in case you have symlinks to extensions to force it
     // load multiple times.
     (*runtime_variables)["extension_path"] = base::WrapUnique(
-        new base::StringValue(extension_path.AsUTF8Unsafe()));
+        new base::Value(extension_path.AsUTF8Unsafe()));
 
     extension->set_runtime_variables(runtime_variables.get());
     if (server->permissions_delegate())
@@ -403,8 +439,10 @@ std::vector<std::string> RegisterExternalExtensionsInDirectory(
       registered_extensions.push_back(extension->name());
       server->RegisterExtension(std::move(extension));
     } else {
+#if TENTA_LOG_ENABLE == 1
       LOG(WARNING) << "Failed to initialize extension: "
                    << extension_path.AsUTF8Unsafe();
+#endif
     }
   }
 

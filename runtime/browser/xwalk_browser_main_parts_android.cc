@@ -23,6 +23,7 @@
 #include "content/public/common/result_codes.h"
 #include "media/base/media_switches.h"
 #include "net/android/network_change_notifier_factory_android.h"
+//#include "xwalk/runtime/net/tenta_network_change_notifier_factory.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/net_module.h"
 #include "net/grit/net_resources.h"
@@ -33,9 +34,16 @@
 #include "xwalk/extensions/common/xwalk_extension.h"
 #include "xwalk/extensions/common/xwalk_extension_switches.h"
 #include "xwalk/runtime/browser/android/cookie_manager.h"
+#include "xwalk/runtime/browser/xwalk_browser_context.h"
 #include "xwalk/runtime/browser/xwalk_runner.h"
 #include "xwalk/runtime/common/xwalk_runtime_features.h"
 #include "xwalk/runtime/common/xwalk_switches.h"
+#include "gpu/config/gpu_switches.h"
+
+#ifdef TENTA_CHROMIUM_BUILD
+#include "browser/tenta_tab_model.h"
+using namespace tenta::ext;
+#endif
 
 namespace {
 
@@ -115,6 +123,7 @@ namespace xwalk {
 
 using content::BrowserThread;
 using extensions::XWalkExtension;
+using content::BrowserContext;
 
 void GetUserDataDir(base::FilePath* user_data_dir) {
   if (!PathService::Get(base::DIR_ANDROID_APP_DATA, user_data_dir)) {
@@ -132,7 +141,9 @@ XWalkBrowserMainPartsAndroid::~XWalkBrowserMainPartsAndroid() {
 
 void XWalkBrowserMainPartsAndroid::PreEarlyInitialization() {
   net::NetworkChangeNotifier::SetFactory(
+//		  new tenta::NetworkChangeNotifierFactoryTenta());
       new net::NetworkChangeNotifierFactoryAndroid());
+
   // As Crosswalk uses in-process mode, that's easier than Chromium
   // to reach the default limit(1024) of open files per process on
   // Android. So increase the limit to 4096 explicitly.
@@ -151,8 +162,6 @@ void XWalkBrowserMainPartsAndroid::PreMainMessageLoopStart() {
   command_line->AppendSwitch(switches::kXWalkDisableExtensionProcess);
   // Enable viewport.
   command_line->AppendSwitch(switches::kEnableViewport);
-  // Temporary fix for XWALK-7231
-  command_line->AppendSwitch(switches::kDisableUnifiedMediaPipeline);
 
   // Only force to enable WebGL for Android for IA platforms because
   // we've tested the WebGL conformance test. For other platforms, just
@@ -186,14 +195,24 @@ void XWalkBrowserMainPartsAndroid::PostMainMessageLoopStart() {
 
 void XWalkBrowserMainPartsAndroid::PreMainMessageLoopRun() {
   net::NetModule::SetResourceProvider(PlatformResourceProvider);
-  if (parameters_.ui_task) {
-    parameters_.ui_task->Run();
-    delete parameters_.ui_task;
-    run_default_message_loop_ = false;
-  }
+//  if (parameters_.ui_task) {
+//    parameters_.ui_task->Run();
+//    delete parameters_.ui_task;
+//    run_default_message_loop_ = false;
+//  }
 
+#ifdef TENTA_CHROMIUM_BUILD
+  // PreProfileInit();
+  // EnsureBrowserContextKeyedServiceFactoriesBuilt
+  TentaTabModelFactory::GetInstance();
+#endif
   xwalk_runner_->PreMainMessageLoopRun();
 
+#ifdef TENTA_CHROMIUM_BUILD
+  // create TentaTabModel for BrowserContext
+  content::BrowserContext* context = xwalk_runner_->browser_context();
+  TentaTabModelFactory::GetForContext(context);
+#endif
   extension_service_ = xwalk_runner_->extension_service();
 
   // Due to http://code.google.com/p/chromium/issues/detail?id=507809,
@@ -217,7 +236,7 @@ void XWalkBrowserMainPartsAndroid::PreMainMessageLoopRun() {
 void XWalkBrowserMainPartsAndroid::PostMainMessageLoopRun() {
   XWalkBrowserMainParts::PostMainMessageLoopRun();
 
-  base::MessageLoopForUI::current()->Start();
+//  base::MessageLoopForUI::current()->Start();
 }
 
 void XWalkBrowserMainPartsAndroid::CreateInternalExtensionsForExtensionThread(
