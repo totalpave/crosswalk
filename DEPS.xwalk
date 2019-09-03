@@ -75,6 +75,9 @@ solutions = [
       'src/chrome/tools/test/reference_build/chrome_linux': None,
       'src/chrome/tools/test/reference_build/chrome_mac': None,
       'src/chrome/tools/test/reference_build/chrome_win': None,
+
+      # Overrides
+      'src/third_party/angle': chromium_git + '/angle/angle.git@93bb092f88c982ef4c6d4e0db72afc5d7c178b42'
     },
     "custom_vars": {
       "checkout_android": True,
