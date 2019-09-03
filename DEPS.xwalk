@@ -20,7 +20,8 @@
 #chromium_crosswalk_rev = '69460337472cdee7466fbec9728532cde1fcdd37'
 chromium_crosswalk_rev = 'totalpave/master'
 
-v8_crosswalk_rev = 'b8e695a5f1f59576670206aef30f8b896f0813cd'
+#v8_crosswalk_rev = 'b8e695a5f1f59576670206aef30f8b896f0813cd'
+v8_crosswalk_rev = 'totalpave/master'
 
 # We need our own copy of src/buildtools in order to have the gn and
 # clang-format binaries in a location that can be found automatically both by
