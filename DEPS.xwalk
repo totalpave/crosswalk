@@ -18,7 +18,7 @@
 # -----------------------------------
 
 #chromium_crosswalk_rev = '69460337472cdee7466fbec9728532cde1fcdd37'
-chromium_crosswalk_rev = 'totalpave/master'
+chromium_crosswalk_rev = 'totalpave/chromium76'
 
 #v8_crosswalk_rev = 'b8e695a5f1f59576670206aef30f8b896f0813cd'
 v8_crosswalk_rev = 'totalpave/master'
@@ -77,7 +77,7 @@ solutions = [
       'src/chrome/tools/test/reference_build/chrome_win': None,
 
       # Overrides
-      'src/third_party/angle': crosswalk_git + '/angle.git@totalpave/master'
+      # 'src/third_party/angle': crosswalk_git + '/angle.git@totalpave/master'
     },
     "custom_vars": {
       "checkout_android": True,
