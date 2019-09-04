@@ -6,7 +6,7 @@ import("//build/config/android/rules.gni")
 import("//xwalk/build/version.gni")
 import("//xwalk/build/xwalk.gni")
 import("//xwalk/runtime/android/core_internal/chromium_java_deps.gni")
-import("//xwalk/build/tenta.gni")
+# import("//xwalk/build/tenta.gni")
 
 android_library("xwalk_refactor_java") {
   java_files = [
@@ -111,10 +111,10 @@ android_library("xwalk_refactor_java") {
   #     "//xwalk/runtime/android/empty_tenta:tenta_empty_java",
   #   ]
   # }
-  srcjars = [ 
-    "$root_gen_dir/xwalk/runtime/android/core_refactor/xwalk_core_version_gen.srcjar",
-    "$root_gen_dir/xwalk/runtime/android/core_refactor/xwalk_app_version_gen.srcjar",
-  ]
+  # srcjars = [ # Unused
+  #   "$root_gen_dir/xwalk/runtime/android/core_refactor/xwalk_core_version_gen.srcjar",
+  #   "$root_gen_dir/xwalk/runtime/android/core_refactor/xwalk_app_version_gen.srcjar",
+  # ]
 }
 
 generate_jni("xwalk_refactor_native_jni") {

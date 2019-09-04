@@ -7,8 +7,14 @@ import("//build/config/ui.gni")
 import("//third_party/ffmpeg/ffmpeg_options.gni")
 import("//xwalk/build/version.gni")
 import("//xwalk/build/xwalk.gni")
-import("//xwalk/build/tenta.gni")
-import("//ppapi/features/features.gni") 
+
+# Disable tenta-specific stuff
+# import("//xwalk/build/tenta.gni") 
+
+# this doesn't exist anymore
+# import("//ppapi/features/features.gni") 
+import("//ppapi/buildflags/buildflags.gni")
+
 import("//components/nacl/features.gni")
 
 group("xwalk_builder") {
@@ -398,18 +404,20 @@ source_set("xwalk_runtime") {
     "//content/public/child",
     "//content/public/common",
     "//content/public/utility",
-    "//device/geolocation",
-    "//device/geolocation/public/interfaces",
+    # //device/geolocation doesn't exist anymore...
+    # "//device/geolocation",
+    # "//device/geolocation/public/interfaces",
     "//gin",
     "//ipc",
     "//media",
     "//net",
     "//net:net_resources",
-    "//ppapi/features",
+    # "//ppapi/features",
+    "//ppapi/buildflags",
     "//skia",
     "//storage/browser",
     "//storage/common",
-    "//third_party/WebKit/public:blink",
+    "//third_party/blink/public:blink",
     "//third_party/boringssl",
     "//ui/base",
     "//ui/gl",

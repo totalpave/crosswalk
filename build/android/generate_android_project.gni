@@ -224,20 +224,20 @@ template("generate_android_project") {
   # file) and generate a .srcjar file with all the generated R.java files, as
   # well as an R.txt for the AAR.
   _process_resources_target = "${target_name}__process_resources"
-  process_resources(_process_resources_target) {
+  prepare_resources(_process_resources_target) {
     android_manifest = invoker.android_manifest
     build_config = _build_config
     deps = [
       ":$_build_config_target",
     ]
-    generate_constant_ids = true
+    # generate_constant_ids = true # no effect
     r_text_out_path = _r_file_path
     resource_dirs = [ "//build/android/empty" ]
     srcjar_path = "$target_gen_dir/$target_name.srcjar"
 
     # Unused, but required.
     zip_path = _base_path + "_reszip__unused.zip"
-    all_resources_zip_path = _base_path + "_reszip__unused.all.zip"
+    # all_resources_zip_path = _base_path + "_reszip__unused.all.zip" # no effect
 #    shared_resources = true
 
     if (defined(invoker.include_all_resources) ) {
@@ -342,15 +342,16 @@ template("generate_android_project") {
                        ])
     supports_android = true
     requires_android = true
-    override_build_config = _build_config
+    # override_build_config = _build_config # Unused
     srcjar_deps = _srcjar_deps
-    
-    android_manifest = "//build/android/AndroidManifest.xml"
+    type = "java_library"
+
+    # android_manifest = "//build/android/AndroidManifest.xml" # Unused
     deps = [
       ":$_build_config_target",
     ]
     dex_path = _base_path + "__unused.dex.jar"
-    emma_never_instrument = true
+    # emma_never_instrument = true # Unused
 #    chromium_code = true
     jar_excluded_patterns = []
     if (defined(invoker.resource_excluded_patterns)) {
@@ -362,7 +363,8 @@ template("generate_android_project") {
     }
                                    
     print("java_library_impl", _java_target, " exclude_patterns", jar_excluded_patterns)
-    jar_path = _resource_jar_path
+    # We cannot have sources and a jar path at the same time anymore.
+    # jar_path = _resource_jar_path
     if (defined(invoker.java_files)) {
         java_files = invoker.java_files
     }

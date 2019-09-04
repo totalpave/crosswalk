@@ -9,8 +9,12 @@ import("//xwalk/build/android/generate_android_project.gni")
 import("//xwalk/build/android/maven_pom.gni")
 import("//xwalk/build/version.gni")
 import("//xwalk/runtime/android/core_internal/chromium_java_deps.gni")
-import("//base/android/jni_generator/jni_exception_list.gni")
-import("//xwalk/build/tenta.gni") 
+
+# This no longer exists
+# import("//base/android/jni_generator/jni_exception_list.gni")
+
+# Disable tenta-specifics
+# import("//xwalk/build/tenta.gni") 
 
 declare_args() {
   # Name of Crosswalk Maven artifacts used to generate their respective POM
@@ -41,9 +45,9 @@ android_library("xwalk_core_java") {
   #     "//xwalk/runtime/android/empty_tenta:tenta_empty_java",
   #   ]
   # }
-  srcjars =[ 
+  # srcjars =[ 
 #     "$root_gen_dir/xwalk_core_reflection_layer/wrapper/wrapper.srcjar"
-  ]
+  # ]
   java_files = [
     "src/org/xwalk/core/extension/BindingObject.java",
     "src/org/xwalk/core/extension/BindingObjectAutoJS.java",
@@ -205,7 +209,8 @@ java_cpp_template("xwalk_native_libraries_gen") {
 generate_jni_registration("xwalk_jni_registration") {
   target = ":xwalk_core_library"
   output = "$target_gen_dir/${target_name}.h"
-  exception_files = jni_exception_files
+  # jni_exception_files have been either moved or deleted
+  # exception_files = jni_exception_files
   print("ohoooooooooo register natives! out=", output)
 }
 
