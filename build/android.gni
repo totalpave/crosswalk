@@ -23,3 +23,7 @@ import("//xwalk/build/common.gni")
 # Temporarily disable use of external snapshot files (XWALK-3516).
 # From //v8/gni/v8.gni
 v8_use_external_startup_data = false
+
+# We cannot use proprietary codecs as we are not
+# google
+proprietary_codecs = false
