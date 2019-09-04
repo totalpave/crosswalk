@@ -30,17 +30,113 @@ deps = {
 }
 
 hooks = [
+  #{
+  #  # Generate .gclient-xwalk for Crosswalk's dependencies.
+  #  "name": "generate-gclient-xwalk",
+  #  "pattern": ".",
+  #  "action": ["python", "src/xwalk/tools/generate_gclient-xwalk.py"],
+  #},
+  #{
+  #  # Fetch Crosswalk dependencies.
+  #  "name": "fetch-deps",
+  #  "pattern": ".",
+  #  "action": ["python", "src/xwalk/tools/fetch_deps.py", "-v"],
+  #},
   {
-    # Generate .gclient-xwalk for Crosswalk's dependencies.
-    "name": "generate-gclient-xwalk",
-    "pattern": ".",
-    "action": ["python", "src/xwalk/tools/generate_gclient-xwalk.py"],
+    'action': [
+      'download_from_google_storage',
+      '--no_resume',
+      '--platform=win32',
+      '--no_auth',
+      '--bucket',
+      'chromium-gn',
+      '-s',
+      'src/xwalk/buildtools/win/gn.exe.sha1'
+    ],
+    'pattern':
+      '.',
+    'name':
+      'gn_win'
   },
   {
-    # Fetch Crosswalk dependencies.
-    "name": "fetch-deps",
-    "pattern": ".",
-    "action": ["python", "src/xwalk/tools/fetch_deps.py", "-v"],
+    'action': [
+      'download_from_google_storage',
+      '--no_resume',
+      '--platform=darwin',
+      '--no_auth',
+      '--bucket',
+      'chromium-gn',
+      '-s',
+      'src/xwalk/buildtools/mac/gn.sha1'
+    ],
+    'pattern':
+      '.',
+    'name':
+      'gn_mac'
+  },
+  {
+    'action': [
+      'download_from_google_storage',
+      '--no_resume',
+      '--platform=linux*',
+      '--no_auth',
+      '--bucket',
+      'chromium-gn',
+      '-s',
+      'src/xwalk/buildtools/linux64/gn.sha1'
+    ],
+    'pattern':
+      '.',
+    'name':
+      'gn_linux64'
+  },
+  {
+    'action': [
+      'download_from_google_storage',
+      '--no_resume',
+      '--platform=win32',
+      '--no_auth',
+      '--bucket',
+      'chromium-clang-format',
+      '-s',
+      'src/xwalk/buildtools/win/clang-format.exe.sha1'
+    ],
+    'pattern':
+      '.',
+    'name':
+      'clang_format_win'
+  },
+  {
+    'action': [
+      'download_from_google_storage',
+      '--no_resume',
+      '--platform=darwin',
+      '--no_auth',
+      '--bucket',
+      'chromium-clang-format',
+      '-s',
+      'src/xwalk/buildtools/mac/clang-format.sha1'
+    ],
+    'pattern':
+      '.',
+    'name':
+      'clang_format_mac'
+  },
+  {
+    'action': [
+      'download_from_google_storage',
+      '--no_resume',
+      '--platform=linux*',
+      '--no_auth',
+      '--bucket',
+      'chromium-clang-format',
+      '-s',
+      'src/xwalk/buildtools/linux64/clang-format.sha1'
+    ],
+    'pattern':
+      '.',
+    'name':
+      'clang_format_linux'
   },
   {
     # From src/DEPS: fetch the Google Play services library and, if
