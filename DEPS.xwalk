@@ -20,9 +20,10 @@
 # -----------------------------------
 
 #chromium_crosswalk_rev = '69460337472cdee7466fbec9728532cde1fcdd37'
-chromium_crosswalk_rev = 'totalpave/master'
+chromium_crosswalk_rev = 'totalpave/chromium76'
 
-v8_crosswalk_rev = 'b8e695a5f1f59576670206aef30f8b896f0813cd'
+#v8_crosswalk_rev = 'b8e695a5f1f59576670206aef30f8b896f0813cd'
+v8_crosswalk_rev = 'totalpave/master'
 
 # We need our own copy of src/buildtools in order to have the gn and
 # clang-format binaries in a location that can be found automatically both by
@@ -76,6 +77,9 @@ solutions = [
       'src/chrome/tools/test/reference_build/chrome_linux': None,
       'src/chrome/tools/test/reference_build/chrome_mac': None,
       'src/chrome/tools/test/reference_build/chrome_win': None,
+
+      # Overrides
+      # 'src/third_party/angle': crosswalk_git + '/angle.git@totalpave/master'
     },
     "custom_vars": {
       "checkout_android": True,
