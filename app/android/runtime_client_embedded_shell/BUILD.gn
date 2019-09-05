@@ -17,7 +17,7 @@ android_apk("xwalk_runtime_client_embedded_shell_apk") {
     ":xwalk_runtime_client_embedded_shell_apk_java",
     ":xwalk_runtime_client_embedded_shell_apk_resources",
     "//base:base_java",
-    "//xwalk/extensions/test:echo_extension",
+    # "//xwalk/extensions/test:echo_extension",
     #"//xwalk/runtime/android/core_internal:xwalk_core_internal_java",
   ]
 }
