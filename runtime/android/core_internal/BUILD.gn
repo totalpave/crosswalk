@@ -6,7 +6,7 @@ import("//build/config/android/rules.gni")
 import("//xwalk/build/version.gni")
 import("//xwalk/build/xwalk.gni")
 import("//xwalk/runtime/android/core_internal/chromium_java_deps.gni")
-import("//xwalk/build/tenta.gni")
+# import("//xwalk/build/tenta.gni")
 
 reflection_gen_dir = "$root_gen_dir/xwalk_core_reflection_layer/"
 
@@ -60,20 +60,20 @@ android_library("xwalk_core_internal_java") {
     "//xwalk/runtime/android/core_refactor:xwalk_refactor_java",
   ]
   deps += core_internal_java_chromium_deps
-  if (tenta_chromium_build) {
-    deps += [
-      "//xwalk/third_party/tenta/meta_fs/java:meta_fs_java",
-      "//xwalk/third_party/tenta/chromium_cache:chromium_cache_java",
-      "//xwalk/third_party/tenta/crosswalk_extensions/java:crosswalk_extensions_java",
-    ]
-  } else {
-    deps += [
-      "//xwalk/runtime/android/empty_tenta:tenta_empty_java",
-    ]
-  }
-  srcjars = [ 
-    "$reflection_gen_dir/bridge/bridge.srcjar",
-  ]
+  # if (tenta_chromium_build) {
+  #   deps += [
+  #     "//xwalk/third_party/tenta/meta_fs/java:meta_fs_java",
+  #     "//xwalk/third_party/tenta/chromium_cache:chromium_cache_java",
+  #     "//xwalk/third_party/tenta/crosswalk_extensions/java:crosswalk_extensions_java",
+  #   ]
+  # } else {
+  #   deps += [
+  #     "//xwalk/runtime/android/empty_tenta:tenta_empty_java",
+  #   ]
+  # }
+  # srcjars = [ # Unused
+  #   "$reflection_gen_dir/bridge/bridge.srcjar",
+  # ]
   java_files = [
 #     "src/org/xwalk/core/internal/AndroidProtocolHandler.java",
 #     "src/org/xwalk/core/internal/ClientCertLookupTable.java",
@@ -200,7 +200,7 @@ action("xwalk_core_reflection_layer_gen") {
 }
 
 generate_jni("xwalk_core_native_jni") {
-  jni_package = "xwalk"
+  # jni_package = "xwalk"
   sources = [
 #     "src/org/xwalk/core/internal/AndroidProtocolHandler.java",
 #     "src/org/xwalk/core/internal/XWalkAutofillClientAndroid.java",
@@ -223,6 +223,6 @@ generate_jni("xwalk_core_native_jni") {
 }
 
 generate_jar_jni("xwalk_core_jar_jni") {
-  jni_package = "xwalk"
+  # jni_package = "xwalk"
   classes = [ "java/io/InputStream.class" ]
 }

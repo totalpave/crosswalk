@@ -434,8 +434,8 @@ source_set("xwalk_runtime") {
     "//xwalk/resources:xwalk_resources_100_percent_pak",
     "//xwalk/resources:xwalk_resources_200_percent_pak",
     "//xwalk/resources:xwalk_resources_300_percent_pak",
-    "//xwalk/sysapps",
-    "//xwalk/sysapps:xwalk_sysapps_resources",
+    # "//xwalk/sysapps",
+    # "//xwalk/sysapps:xwalk_sysapps_resources",
     "//xwalk/runtime/android/empty_tenta",
   ]
 
@@ -458,10 +458,12 @@ source_set("xwalk_runtime") {
       "//content/public/android:content_java",
       "//components/autofill/android:autofill_java",
       "//components/cdm/browser",
-#       "//xwalk/runtime/android/core_internal:xwalk_core_jar_jni",
-#       "//xwalk/runtime/android/core_internal:xwalk_core_native_jni",
-      "//xwalk/runtime/android/core_refactor:xwalk_refactor_native_jni",
-      "//xwalk/runtime/android/core_refactor:xwalk_core_jar_jni",
+      "//xwalk/runtime/android/core_internal:xwalk_core_jar_jni",
+      "//xwalk/runtime/android/core_internal:xwalk_core_native_jni",
+
+      # tenta stuff
+      # "//xwalk/runtime/android/core_refactor:xwalk_refactor_native_jni",
+      # "//xwalk/runtime/android/core_refactor:xwalk_core_jar_jni",
     ]
   } else {
     deps += [
@@ -598,20 +600,20 @@ action("generate_upstream_blink_version") {
 group("xwalk_all_tests") {
   testonly = true
   deps = [
-    "//xwalk/extensions/test:xwalk_extensions_browsertest",
-    "//xwalk/extensions/test:xwalk_extensions_unittest",
-    "//xwalk/sysapps:xwalk_sysapps_browsertest",
-    "//xwalk/sysapps:xwalk_sysapps_unittest",
+    # "//xwalk/extensions/test:xwalk_extensions_browsertest",
+    # "//xwalk/extensions/test:xwalk_extensions_unittest",
+    # "//xwalk/sysapps:xwalk_sysapps_browsertest",
+    # "//xwalk/sysapps:xwalk_sysapps_unittest",
     "//xwalk/test:xwalk_browsertest",
     "//xwalk/test:xwalk_unittest",
   ]
 
-  if (is_win) {
-    deps += [
-      "//xwalk/extensions/test/win:xwalk_dotnet_extensions_browsertest",
-      "//xwalk/extensions/test/win:xwalk_dotnet_extensions_unittest",
-    ]
-  }
+  # if (is_win) {
+  #   deps += [
+  #     "//xwalk/extensions/test/win:xwalk_dotnet_extensions_browsertest",
+  #     "//xwalk/extensions/test/win:xwalk_dotnet_extensions_unittest",
+  #   ]
+  # }
 }
 
 # Copy xwalk/VERSION to the build directory for tools (such as
