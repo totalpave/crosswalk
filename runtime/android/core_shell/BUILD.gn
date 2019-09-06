@@ -5,6 +5,7 @@
 import("//build/config/android/rules.gni")
 
 android_apk("xwalk_core_shell_apk") {
+  testonly = true # Required to use //tools/android:android_tools
   apk_name = "XWalkCoreShell"
   android_manifest = "AndroidManifest.xml"
   shared_libraries = [
@@ -21,6 +22,7 @@ android_apk("xwalk_core_shell_apk") {
 }
 
 android_library("xwalk_core_shell_apk_java") {
+  testonly = true # Required to use //tools/android:android_tools
   java_files = [
     "src/org/xwalk/core/xwview/shell/SectionsPagerAdapter.java",
     "src/org/xwalk/core/xwview/shell/XWalkViewSectionFragment.java",
@@ -32,7 +34,8 @@ android_library("xwalk_core_shell_apk_java") {
     ":xwalk_core_shell_apk_resources",
     "//base:base_java",
     "//content/public/android:content_java",
-    "//third_party/android_tools:android_support_v13_java",
+    # "//third_party/android_tools:android_support_v13_java",
+    "//tools/android:android_tools",
     "//xwalk/runtime/android/core:xwalk_core_java",
   ]
 }

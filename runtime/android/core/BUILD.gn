@@ -9,6 +9,7 @@ import("//xwalk/build/android/generate_android_project.gni")
 import("//xwalk/build/android/maven_pom.gni")
 import("//xwalk/build/version.gni")
 import("//xwalk/runtime/android/core_internal/chromium_java_deps.gni")
+import("//xwalk/build/variables.gni")
 
 # This no longer exists
 # import("//base/android/jni_generator/jni_exception_list.gni")
@@ -31,7 +32,7 @@ android_library("xwalk_core_java") {
     # "//xwalk/runtime/android/core_refactor:xwalk_refactor_java", # tenta
     "//xwalk/third_party/lzma_sdk:lzma_sdk_java",
     "//xwalk/extensions/android:xwalk_core_extensions_java",
-    "//device/geolocation:geolocation_java",
+    # "//device/geolocation:geolocation_java",
   ]
   # if (tenta_chromium_build) {
   #   deps += [
@@ -110,7 +111,7 @@ java_strings_grd("xwalk_app_strings_grd") {
   ]
 }
 
-generate_android_project("xwalk_core_library") {
+generate_android_project("xwalk_core_library" + build_config_target_suffix) {
   android_manifest =
       "//xwalk/runtime/android/core_internal_empty/AndroidManifest.xml"
   deps = [
@@ -122,7 +123,7 @@ generate_android_project("xwalk_core_library") {
     "//xwalk/resources:xwalk_pak",
     "//xwalk/resources:xwalk_resources_100_percent_pak",
 #     "//xwalk/runtime/android/core_internal:xwalk_core_internal_java",
-     "//xwalk/runtime/android/core_refactor:xwalk_refactor_java",
+    #  "//xwalk/runtime/android/core_refactor:xwalk_refactor_java",
   ]
   binary_files = [
     "$root_out_dir/xwalk.pak",
@@ -161,6 +162,7 @@ generate_android_project("xwalk_core_library") {
 #   ]
   
   shared_libraries = [
+    # this causes a circular dependency, but i think it is somewhat required...
     "//xwalk/runtime/app/android:libxwalkcore",
   ]
   template_dir = "//xwalk/build/android/xwalkcore_library_template"
@@ -207,11 +209,12 @@ java_cpp_template("xwalk_native_libraries_gen") {
 }
 
 generate_jni_registration("xwalk_jni_registration") {
+  # generate_jni_registration adds build_config_target_suffix, so it's not needed here...
   target = ":xwalk_core_library"
-  output = "$target_gen_dir/${target_name}.h"
+  header_output = "$target_gen_dir/${target_name}.h"
   # jni_exception_files have been either moved or deleted
   # exception_files = jni_exception_files
-  print("ohoooooooooo register natives! out=", output)
+  # print("ohoooooooooo register natives! out=", output)
 }
 
 generate_android_project("xwalk_shared_library") {

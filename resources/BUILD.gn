@@ -36,9 +36,9 @@ repack("xwalk_pak") {
     "//content/app/resources",
     "//content/app/strings",
     "//net:net_resources",
-    "//third_party/WebKit/public:image_resources",
-    "//third_party/WebKit/public:resources",
-    "//ui/app_list/resources",
+    "//third_party/blink/public:image_resources",
+    "//third_party/blink/public:resources",
+    # "//ui/app_list/resources", # no longer exist
     "//ui/resources",
     "//ui/strings",
     "//xwalk/application:xwalk_application_resources",
@@ -80,7 +80,7 @@ repack("xwalk_resources_100_percent_pak") {
   deps = [
     "//components/resources",
     "//content/app/resources",
-    "//third_party/WebKit/public:scaled_resources_100_percent",
+    "//third_party/blink/public:scaled_resources_100_percent",
     "//ui/resources",
   ]
   if (toolkit_views) {
@@ -101,7 +101,7 @@ repack("xwalk_resources_200_percent_pak") {
   deps = [
     "//components/resources",
     "//content/app/resources:resources",
-    "//third_party/WebKit/public:image_resources",
+    "//third_party/blink/public:image_resources",
     "//ui/resources",
   ]
   if (toolkit_views) {
