@@ -190,7 +190,6 @@ template("generate_android_project") {
   _build_config_target = "${target_name}__build_config"
   _build_config = _base_path + ".build_config"
   _rebased_build_config = rebase_path(_build_config, root_build_dir)
-  
   write_build_config(_build_config_target) {
     type = "android_apk"
     deps = invoker.deps

@@ -14,7 +14,7 @@ if (is_android) {
 repack("xwalk_pak") {
   output = "$root_out_dir/xwalk.pak"
   sources = [
-    "$root_gen_dir/blink/public/resources/blink_resources.pak",
+    "$root_gen_dir/third_party/blink/public/resources/blink_resources.pak",
     "$root_gen_dir/components/components_resources.pak",
     "$root_gen_dir/components/strings/components_strings_en-US.pak",
     "$root_gen_dir/content/app/strings/content_strings_en-US.pak",
@@ -58,21 +58,21 @@ repack("xwalk_pak") {
   if (toolkit_views) {
     deps += [ "//ui/views/resources" ]
   }
-  if ( tenta_chromium_build ) {
-    sources += [
-      "$root_gen_dir/xwalk/third_party/tenta/crosswalk_extensions/resources/tenta_error_pages_browser_resources.pak",
-    ]
+  # if ( tenta_chromium_build ) {
+  #   sources += [
+  #     "$root_gen_dir/xwalk/third_party/tenta/crosswalk_extensions/resources/tenta_error_pages_browser_resources.pak",
+  #   ]
 
-    deps += [
-      "//xwalk/third_party/tenta/crosswalk_extensions/resources",
-    ]
-  }
+  #   deps += [
+  #     "//xwalk/third_party/tenta/crosswalk_extensions/resources",
+  #   ]
+  # }
 }
 
 repack("xwalk_resources_100_percent_pak") {
   output = "$root_out_dir/xwalk_100_percent.pak"
   sources = [
-    "$root_gen_dir/blink/public/resources/blink_scaled_resources_100_percent.pak",
+    "$root_gen_dir/third_party/blink/public/resources/blink_scaled_resources_100_percent.pak",
     "$root_gen_dir/components/components_resources_100_percent.pak",
     "$root_gen_dir/content/app/resources/content_resources_100_percent.pak",
     "$root_gen_dir/ui/resources/ui_resources_100_percent.pak",
@@ -93,7 +93,7 @@ repack("xwalk_resources_100_percent_pak") {
 repack("xwalk_resources_200_percent_pak") {
   output = "$root_out_dir/xwalk_200_percent.pak"
   sources = [
-    "$root_gen_dir/blink/public/resources/blink_image_resources_200_percent.pak",
+    "$root_gen_dir/third_party/blink/public/resources/blink_image_resources_200_percent.pak",
     "$root_gen_dir/components/components_resources_200_percent.pak",
     "$root_gen_dir/content/app/resources/content_resources_200_percent.pak",
     "$root_gen_dir/ui/resources/ui_resources_200_percent.pak",
