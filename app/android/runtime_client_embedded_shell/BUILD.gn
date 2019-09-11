@@ -11,7 +11,7 @@ android_apk("xwalk_runtime_client_embedded_shell_apk") {
     "//xwalk/runtime/android/dummy_lib:libxwalkdummy",
     "//xwalk/runtime/app/android:libxwalkcore",
   ]
-  loadable_modules = [ "$root_out_dir/libecho_extension.so" ]
+  # loadable_modules = [ "$root_out_dir/libecho_extension.so" ]
   deps = [
     ":xwalk_runtime_client_embedded_shell_apk_assets",
     ":xwalk_runtime_client_embedded_shell_apk_java",
