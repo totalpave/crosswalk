@@ -9,9 +9,6 @@ import("//xwalk/build/version.gni")
 import("//xwalk/build/xwalk.gni")
 import("//xwalk/build/variables.gni")
 
-# Disable tenta-specific stuff
-# import("//xwalk/build/tenta.gni") 
-
 # this doesn't exist anymore
 # import("//ppapi/features/features.gni") 
 import("//ppapi/buildflags/buildflags.gni")
@@ -120,8 +117,6 @@ source_set("xwalk_runtime") {
     "runtime/browser/android/net/xwalk_url_request_job_factory.h",
     "runtime/browser/android/net_disk_cache_remover.cc",
     "runtime/browser/android/net_disk_cache_remover.h",
-    "runtime/browser/android/net/network_change_tenta.cc",
-    "runtime/browser/android/net/network_change_tenta.h",
     "runtime/browser/android/renderer_host/xwalk_render_view_host_ext.cc",
     "runtime/browser/android/renderer_host/xwalk_render_view_host_ext.h",
     "runtime/browser/android/scoped_allow_wait_for_legacy_web_view_api.h",
@@ -336,8 +331,6 @@ source_set("xwalk_runtime") {
     "runtime/renderer/isolated_file_system.h",
     "runtime/renderer/xwalk_content_renderer_client.cc",
     "runtime/renderer/xwalk_content_renderer_client.h",
-    "runtime/net/tenta_network_change_notifier_factory.cc",
-    "runtime/net/tenta_network_change_notifier_factory.h",
     "//android_webview/browser/renderer_host/auto_login_parser.cc",
     "//android_webview/browser/renderer_host/auto_login_parser.h",
   ]
@@ -436,23 +429,8 @@ source_set("xwalk_runtime") {
     "//xwalk/resources:xwalk_resources_200_percent_pak",
     "//xwalk/resources:xwalk_resources_300_percent_pak",
     # "//xwalk/sysapps",
-    # "//xwalk/sysapps:xwalk_sysapps_resources",
-    # "//xwalk/runtime/android/empty_tenta",
+    # "//xwalk/sysapps:xwalk_sysapps_resources"
   ]
-
-#   if ( tenta_chromium_build ) {
-#     deps += [
-#       "//xwalk/third_party/tenta/meta_fs",
-#       "//xwalk/third_party/tenta/chromium_cache",
-#       "//xwalk/third_party/tenta/crosswalk_extensions",
-#       "//xwalk/third_party/tenta/mimicvpn",
-#     ]
-#     public_deps = [ "//xwalk/third_party/tenta/mimicvpn:mimicvpn_src" ]
-#   } else {
-#     deps += [
-# #       "//xwalk/runtime/android/empty_tenta",
-#     ]
-#   }
                              
   if (is_android) {
     deps += [
@@ -460,11 +438,7 @@ source_set("xwalk_runtime") {
       "//components/autofill/android:autofill_java",
       "//components/cdm/browser",
       "//xwalk/runtime/android/core_internal:xwalk_core_jar_jni",
-      "//xwalk/runtime/android/core_internal:xwalk_core_native_jni",
-
-      # tenta stuff
-      # "//xwalk/runtime/android/core_refactor:xwalk_refactor_native_jni",
-      # "//xwalk/runtime/android/core_refactor:xwalk_core_jar_jni",
+      "//xwalk/runtime/android/core_internal:xwalk_core_native_jni"
     ]
   } else {
     deps += [

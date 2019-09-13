@@ -138,18 +138,20 @@ template("generate_android_project") {
       deps = _native_libs_deps
       write_runtime_deps = _runtime_deps_file
     }
-    _native_lib_version_rule = ""
-    if (defined(invoker.native_lib_version_rule)) {
-      _native_lib_version_rule = invoker.native_lib_version_rule
-    }
-    _native_lib_version_arg = "\"\""
-    if (defined(invoker.native_lib_version_arg)) {
-      _native_lib_version_arg = invoker.native_lib_version_arg
-    }
+    
+    # MAY STILL NEED THESE...
+    # _native_lib_version_rule = ""
+    # if (defined(invoker.native_lib_version_rule)) {
+    #   _native_lib_version_rule = invoker.native_lib_version_rule
+    # }
+
+    # _native_lib_version_arg = "\"\""
+    # if (defined(invoker.native_lib_version_arg)) {
+    #   _native_lib_version_arg = invoker.native_lib_version_arg
+    # }
   } else {
     # Must exist for instrumentation_test_apk() to depend on.
-    group("${_target_name}__runtime_deps") {
-    }
+    group("${_target_name}__runtime_deps") {}
   }
 
 #     _rebased_build_config = rebase_path(_build_config, root_build_dir)
@@ -257,6 +259,9 @@ template("generate_android_project") {
     # M53 also added a block to order the library dependencies, but we do not
     # need that for now.
 
+    print("native_libs")
+    print(_native_libs_deps)
+
     _ordered_libraries_json =
         "$target_gen_dir/$target_name.ordered_libararies.json"
     _rebased_ordered_libraries_json =
@@ -265,49 +270,65 @@ template("generate_android_project") {
 
     # TODO(agrieve): Make GN write runtime deps in dependency order so as to
     # not need this manual sorting step.
-    action(_ordered_libraries_target) {
-      script = "//build/android/gyp/write_ordered_libraries.py"
+    # action(_ordered_libraries_target) {
+    #   script = "//build/android/gyp/write_ordered_libraries.py"
+    #   deps = _native_libs_deps + [ ":$_build_config_target" ]
+    #   outputs = [
+    #     _ordered_libraries_json,
+    #   ]
+    #   _rebased_android_readelf = rebase_path(android_readelf, root_build_dir)
+    #   args = [
+    #     "--readelf=$_rebased_android_readelf",
+    #     "--output=$_rebased_ordered_libraries_json",
+    #     "--libraries-dir=.",
+    #     "--input-libraries=@FileArg($_rebased_build_config:native:libraries)",
+    #   ]
+    # }
+
+    write_ordered_libraries(_ordered_libraries_target) {
       deps = _native_libs_deps + [ ":$_build_config_target" ]
-      outputs = [
-        _ordered_libraries_json,
-      ]
-      _rebased_android_readelf = rebase_path(android_readelf, root_build_dir)
-      args = [
-        "--readelf=$_rebased_android_readelf",
-        "--output=$_rebased_ordered_libraries_json",
-        "--libraries-dir=.",
-        "--input-libraries=@FileArg($_rebased_build_config:native:libraries)",
+      ordered_libararies = _ordered_libraries_json
+      rebased_ordered_libaries_json = _rebased_ordered_libaries_json
+      rebased_build_config = _rebased_build_config
+    }
+
+    write_native_libraries_java("${target_name}__native_libraries_java") {
+      use_final_fields = true
+      native_libraries_list_file = "$_rebased_ordered_libraries_json:java_libraries_list"
+      print(_ordered_libraries_target)
+      deps = [
+        _ordered_libraries_target
       ]
     }
                                 
-    java_cpp_template("${target_name}__native_libraries_java") {
-      package_path = "org/chromium/base/library_loader"
-      sources = [
-        "//base/android/java/templates/NativeLibraries.template",
-      ]
-      inputs = [
-        _ordered_libraries_json,
-      ]
-      deps = [
-        ":${_ordered_libraries_target}",
-      ]
+    # java_cpp_template("${target_name}__native_libraries_java") {
+    #   package_path = "org/chromium/base/library_loader"
+    #   sources = [
+    #     "//base/android/java/templates/NativeLibraries.template",
+    #   ]
+    #   inputs = [
+    #     _ordered_libraries_json,
+    #   ]
+    #   deps = [
+    #     ":${_ordered_libraries_target}",
+    #   ]
       
-      if (_native_lib_version_rule != "") {
-        deps += [ _native_lib_version_rule ]
-      }
+    #   if (_native_lib_version_rule != "") {
+    #     deps += [ _native_lib_version_rule ]
+    #   }
       
-      defines = [
-        "NATIVE_LIBRARIES_LIST=" +
-            "@FileArg($_rebased_ordered_libraries_json:java_libraries_list)",
-        "NATIVE_LIBRARIES_VERSION_NUMBER=$_native_lib_version_arg",
-      ]
+    #   defines = [
+    #     "NATIVE_LIBRARIES_LIST=" +
+    #         "@FileArg($_rebased_ordered_libraries_json:java_libraries_list)",
+    #     "NATIVE_LIBRARIES_VERSION_NUMBER=$_native_lib_version_arg",
+    #   ]
 #         if (_use_chromium_linker) {
 #           defines += [ "ENABLE_CHROMIUM_LINKER" ]
 #         }
 #         if (_load_library_from_apk) {
 #           defines += [ "ENABLE_CHROMIUM_LINKER_LIBRARY_IN_ZIP_FILE" ]
 #         }
-    }
+    # }
     _srcjar_deps += [ ":${target_name}__native_libraries_java" ]
 
     # We also need to generate BuildConfig.java, which some classes in //base
@@ -461,6 +482,37 @@ template("generate_android_project") {
     public_deps = [
       ":$_aar_target",
       ":$_project_target",
+    ]
+  }
+}
+
+template("write_ordered_libraries") {
+  action(target_name) {
+    forward_variables_from(invoker, [
+      "deps",
+      "visibility"
+    ])
+
+    script = "//build/android/gyp/write_ordered_libraries.py"
+    deps = []
+    if (defined(invoker.deps)) {
+      deps += invoker.deps
+    }
+
+    _rebased_android_readelf = rebase_path(android_readelf, root_build_dir)
+
+    _rebased_ordered_libaries_json = invoker.rebased_ordered_libaries_json
+    _rebased_build_config = invoker.rebased_build_config
+
+    args = [
+      "--readelf=$_rebased_android_readelf",
+      "--output=$_rebased_ordered_libraries_json",
+      "--libraries-dir=.",
+      "--input-libraries=@FileArg($_rebased_build_config:native:libraries)",
+    ]
+
+    outputs = [
+      invoker.ordered_libraries_json
     ]
   }
 }
